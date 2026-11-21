@@ -64,10 +64,12 @@ fn day_button(day: i8, is_selected: bool, is_today: bool) -> Button<'static, Mes
 pub fn view<'a>(selected: Date, today: Date, first_day_of_week: u8) -> Element<'a, Message> {
     let start = week_start(first_day_of_week);
     let header = column::with_capacity(2)
+        .width(Length::Fill)
         .push(text::title3(selected.strftime("%A").to_string()))
         .push(text::body(selected.strftime("%B %-d, %Y").to_string()));
 
     let nav = row::with_capacity(3)
+        .width(Length::Fill)
         .push(button::icon(cosmic::widget::icon::from_name("go-previous-symbolic")).on_press(Message::PrevMonth))
         .push(
             text::heading(selected.strftime("%B %Y").to_string())
