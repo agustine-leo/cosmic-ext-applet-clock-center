@@ -3,7 +3,7 @@
 
 use cosmic::{
     iced::Length,
-    widget::{button, column, container, row, text, Button},
+    widget::{button, column, container, row, text},
     Apply, Element,
 };
 use jiff::civil::{Date, Weekday};
@@ -47,32 +47,39 @@ pub fn month_grid(year: i16, month: i8, first_day_of_week: u8) -> Vec<[Option<i8
     rows
 }
 
-fn day_button(day: i8, is_selected: bool, is_today: bool) -> Button<'static, Message> {
-    let style = if is_today {
-        button::ButtonClass::Suggested
-    } else if is_selected {
-        button::ButtonClass::Standard
+/// A day cell. Days are not clickable, so they are plain text (a button without
+/// `on_press` renders dimmed as disabled in libcosmic); today gets an accent pill.
+fn day_cell(day: i8, is_today: bool) -> Element<'static, Message> {
+    let label = text::body(format!("{day}"));
+    let cell = if is_today {
+        container(label.class(cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
+            color: Some(theme.cosmic().on_accent_color().into()),
+            ..Default::default()
+        })))
+        .class(cosmic::theme::Container::custom(|theme| container::Style {
+            background: Some(cosmic::iced::Color::from(theme.cosmic().accent_color()).into()),
+            border: cosmic::iced::Border { radius: theme.cosmic().corner_radii.radius_xl.into(), ..Default::default() },
+            ..Default::default()
+        }))
     } else {
-        button::ButtonClass::Text
+        container(label)
     };
-    button::custom(text::body(format!("{day}")).apply(container).center(Length::Fill))
-        .class(style)
-        .height(Length::Fixed(40.0))
-        .width(Length::Fill)
+    cell.center(Length::Fill).height(Length::Fixed(40.0)).width(Length::Fill).into()
 }
 
-pub fn view<'a>(selected: Date, today: Date, first_day_of_week: u8) -> Element<'a, Message> {
+/// `shown` picks the month on screen; the header always shows today.
+pub fn view<'a>(shown: Date, today: Date, first_day_of_week: u8) -> Element<'a, Message> {
     let start = week_start(first_day_of_week);
     let header = column::with_capacity(2)
         .width(Length::Fill)
-        .push(text::title3(selected.strftime("%A").to_string()))
-        .push(text::body(selected.strftime("%B %-d, %Y").to_string()));
+        .push(text::title3(today.strftime("%A").to_string()))
+        .push(text::body(today.strftime("%B %-d, %Y").to_string()));
 
     let nav = row::with_capacity(3)
         .width(Length::Fill)
         .push(button::icon(cosmic::widget::icon::from_name("go-previous-symbolic")).on_press(Message::PrevMonth))
         .push(
-            text::heading(selected.strftime("%B %Y").to_string())
+            text::heading(shown.strftime("%B %Y").to_string())
                 .apply(container)
                 .center_x(Length::Fill),
         )
@@ -92,14 +99,11 @@ pub fn view<'a>(selected: Date, today: Date, first_day_of_week: u8) -> Element<'
     }
 
     let mut grid = column::with_capacity(6).width(Length::Fill).push(weekdays);
-    for week in month_grid(selected.year(), selected.month(), first_day_of_week) {
+    for week in month_grid(shown.year(), shown.month(), first_day_of_week) {
         let mut r = row::with_capacity(7).width(Length::Fill);
         for cell in week {
             r = r.push(match cell {
-                Some(d) => {
-                    let is_today = Date::new(selected.year(), selected.month(), d).is_ok_and(|x| x == today);
-                    Element::from(day_button(d, d == selected.day(), is_today))
-                }
+                Some(d) => day_cell(d, Date::new(shown.year(), shown.month(), d).is_ok_and(|x| x == today)),
                 None => Element::from(cosmic::widget::Space::new().width(Length::Fill).height(Length::Fixed(40.0))),
             });
         }
