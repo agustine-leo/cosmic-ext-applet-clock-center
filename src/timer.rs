@@ -62,7 +62,8 @@ pub fn format_remaining(d: Duration) -> String {
     format!("{:02}:{:02}", s / 60, s % 60)
 }
 
-/// Critical urgency (byte 2) so the banner is not swallowed by Do Not Disturb.
+/// Critical urgency (byte 2). cosmic-notifications still hides banners under Do Not
+/// Disturb, so the caller also plays a sound then (see `should_play_sound`).
 pub async fn send_done_notification(minutes: u32) -> zbus::Result<()> {
     let conn = zbus::Connection::session().await?;
     let mut hints: HashMap<&str, Value<'_>> = HashMap::new();
@@ -85,6 +86,27 @@ pub async fn send_done_notification(minutes: u32) -> zbus::Result<()> {
     )
     .await?;
     Ok(())
+}
+
+/// A finished timer only needs a sound when Do Not Disturb hides its banner.
+pub fn should_play_sound(do_not_disturb: bool) -> bool {
+    do_not_disturb
+}
+
+/// Play the freedesktop "complete" sound; errors are only logged.
+pub async fn play_done_sound() {
+    let result = tokio::process::Command::new("canberra-gtk-play")
+        .args(["-i", "complete", "-d", "Clock Center timer"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await;
+    match result {
+        Ok(status) if !status.success() => tracing::warn!(%status, "canberra-gtk-play failed"),
+        Ok(_) => {}
+        Err(err) => tracing::warn!(?err, "Could not run canberra-gtk-play"),
+    }
 }
 
 pub fn view<'a>(presets: &'a [u32], state: &'a TimerState, now: SystemTime) -> Element<'a, Message> {
@@ -162,6 +184,11 @@ mod tests {
         assert_eq!(s.tick(t0 + Duration::from_secs(60)), Some(1));
         assert_eq!(s.tick(t0 + Duration::from_secs(61)), None);
         assert!(s.current.is_none());
+    }
+    #[test]
+    fn sound_only_under_dnd() {
+        assert!(should_play_sound(true));
+        assert!(!should_play_sound(false));
     }
     #[test]
     #[ignore = "sends one real notification"]

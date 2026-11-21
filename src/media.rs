@@ -150,6 +150,8 @@ fn meta_artists(meta: &HashMap<String, OwnedValue>) -> String {
     }
 }
 
+const PLAYER_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
 async fn read_player(conn: &Connection, bus_name: &str) -> zbus::Result<PlayerState> {
     let root = MediaPlayer2Proxy::builder(conn)
         .destination(bus_name.to_owned())?
@@ -182,9 +184,11 @@ async fn read_players(conn: &Connection, dbus: &DBusProxy<'_>) -> zbus::Result<V
         if !name.starts_with(MPRIS_PREFIX) || IGNORED.contains(&name) {
             continue;
         }
-        match read_player(conn, name).await {
-            Ok(p) => out.push(p),
-            Err(err) => tracing::debug!("Skipping MPRIS player {name}: {err}"),
+        // One hung player must not stall updates for the others.
+        match tokio::time::timeout(PLAYER_READ_TIMEOUT, read_player(conn, name)).await {
+            Ok(Ok(p)) => out.push(p),
+            Ok(Err(err)) => tracing::debug!("Skipping MPRIS player {name}: {err}"),
+            Err(_) => tracing::warn!("Skipping MPRIS player {name}: timed out reading it"),
         }
     }
     Ok(out)

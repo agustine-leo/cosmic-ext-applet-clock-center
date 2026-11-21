@@ -220,14 +220,20 @@ impl cosmic::Application for App {
             }
             Message::TimerTick => {
                 self.timer_now = std::time::SystemTime::now();
-                match self.timer.tick(self.timer_now) {
-                    Some(m) => Task::perform(crate::timer::send_done_notification(m), |r| {
-                        if let Err(err) = r {
-                            tracing::error!(?err, "Failed to send timer notification");
-                        }
-                        cosmic::Action::None
-                    }),
-                    None => Task::none(),
+                let Some(m) = self.timer.tick(self.timer_now) else {
+                    return Task::none();
+                };
+                let notify = Task::perform(crate::timer::send_done_notification(m), |r| {
+                    if let Err(err) = r {
+                        tracing::error!(?err, "Failed to send timer notification");
+                    }
+                    cosmic::Action::None
+                });
+                // cosmic-notifications shows no banner at all under DND, whatever the urgency.
+                if crate::timer::should_play_sound(self.do_not_disturb) {
+                    Task::batch([notify, cosmic::iced::Task::future(crate::timer::play_done_sound()).discard()])
+                } else {
+                    notify
                 }
             }
             Message::IndicatorFrame => {
@@ -331,12 +337,19 @@ impl cosmic::Application for App {
                     n.actions.first().map(|a| a.0.to_string())
                 };
                 match (action, self.notifications_tx.clone()) {
-                    (Some(action), Some(tx)) => cosmic::iced::Task::future(async move {
-                        if let Err(err) = tx.send(channel::Input::Activate(id, action)).await {
-                            tracing::error!("Failed to send activation for {id}: {err}");
+                    (Some(action), Some(tx)) => {
+                        let activate = cosmic::iced::Task::future(async move {
+                            if let Err(err) = tx.send(channel::Input::Activate(id, action)).await {
+                                tracing::error!("Failed to send activation for {id}: {err}");
+                            }
+                        })
+                        .discard();
+                        // Close the popup after activating, like GNOME and the stock applet.
+                        match self.popup.take() {
+                            Some(p) => Task::batch([activate, destroy_popup(p)]),
+                            None => activate,
                         }
-                    })
-                    .discard(),
+                    }
                     // Nothing to activate: clicking just dismisses it.
                     (None, _) => cosmic::task::message(Message::DismissNotification(id)),
                     (Some(_), None) => {
@@ -355,13 +368,18 @@ impl cosmic::Application for App {
         let tick = if seconds {
             cosmic::iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick)
         } else {
-            // Wake once per minute, aligned to the minute boundary.
+            // Tick when the wall-clock minute changes. Sleeps are capped at 5s so the
+            // label catches up within seconds after suspend/resume.
             Subscription::run(|| {
                 cosmic::iced::stream::channel(1, |mut output| async move {
+                    let mut last = crate::clock::minute_key(&jiff::Zoned::now());
                     loop {
-                        let now = jiff::Zoned::now();
-                        let wait_ms = 60_000 - (now.second() as u64 * 1000 + now.millisecond() as u64);
-                        tokio::time::sleep(std::time::Duration::from_millis(wait_ms + 20)).await;
+                        tokio::time::sleep(crate::clock::tick_delay(&jiff::Zoned::now())).await;
+                        let key = crate::clock::minute_key(&jiff::Zoned::now());
+                        if key == last {
+                            continue;
+                        }
+                        last = key;
                         if futures_util::SinkExt::send(&mut output, Message::Tick).await.is_err() {
                             break;
                         }

@@ -89,6 +89,18 @@ pub async fn get_proxy() -> Result<NotificationsAppletProxy<'static>, String> {
         .map_err(|e| format!("proxy creation failed: {e}"))
 }
 
+/// How long the handshake with the notifications daemon may take.
+const CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+const TIMEOUT_REASON: &str = "timed out connecting to notifications daemon";
+
+/// Fail with `TIMEOUT_REASON` if `fut` does not finish within `dur`.
+async fn with_timeout<T>(
+    dur: std::time::Duration,
+    fut: impl std::future::Future<Output = Result<T, String>>,
+) -> Result<T, String> {
+    tokio::time::timeout(dur, fut).await.unwrap_or_else(|_| Err(TIMEOUT_REASON.to_string()))
+}
+
 async fn unavailable(output: &mut futures::channel::mpsc::Sender<Message>, reason: String) {
     tracing::error!("Notifications unavailable: {reason}");
     _ = output.send(Message::ChannelStatus(ChannelStatus::Unavailable(reason))).await;
@@ -100,7 +112,7 @@ pub fn subscription() -> Subscription<Message> {
     struct Worker;
     Subscription::run_with(std::any::TypeId::of::<Worker>(), |_| {
         stream::channel(50, |mut output: futures::channel::mpsc::Sender<Message>| async move {
-            let proxy = match get_proxy().await {
+            let proxy = match with_timeout(CONNECT_TIMEOUT, get_proxy()).await {
                 Ok(p) => p,
                 Err(reason) => return unavailable(&mut output, reason).await,
             };
@@ -203,5 +215,16 @@ mod tests {
     #[tokio::test] async fn missing_socket_reports_unavailable() {
         std::env::remove_var("COSMIC_NOTIFICATIONS");
         assert!(get_proxy().await.is_err());
+    }
+
+    #[tokio::test] async fn hung_handshake_times_out() {
+        let r: Result<(), String> =
+            with_timeout(std::time::Duration::from_millis(10), std::future::pending()).await;
+        assert_eq!(r, Err(TIMEOUT_REASON.to_string()));
+    }
+
+    #[tokio::test] async fn fast_handshake_passes_through() {
+        let r = with_timeout(std::time::Duration::from_secs(1), async { Ok::<_, String>(7) }).await;
+        assert_eq!(r, Ok(7));
     }
 }
