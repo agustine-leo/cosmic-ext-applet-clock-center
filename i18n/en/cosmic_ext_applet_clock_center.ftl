@@ -5,3 +5,6 @@ clear-all = Clear
 just-now = now
 minutes-ago = {$duration} min ago
 hours-ago = {$duration} h ago
+show-more = +{$more} more
+show-less = Show less
+unknown-app = Other

@@ -11,7 +11,7 @@ use cosmic::{
 };
 use cosmic_notifications_util::{ActionId, Notification};
 use tokio::sync::mpsc;
-use std::sync::LazyLock;
+use std::{collections::HashSet, sync::LazyLock};
 
 use cosmic::cosmic_config::CosmicConfigEntry;
 
@@ -31,6 +31,10 @@ pub struct App {
     notifications: NotificationStore,
     notifications_status: Option<ChannelStatus>,
     notifications_tx: Option<mpsc::Sender<channel::Input>>,
+    /// Notification ids whose card shows the full body.
+    expanded_cards: HashSet<u32>,
+    /// App names whose group shows all cards, not only the newest.
+    expanded_groups: HashSet<String>,
     #[allow(dead_code)]
     config: ClockCenterConfig,
 }
@@ -51,6 +55,9 @@ pub enum Message {
     DismissNotification(u32),
     ActivateNotification(u32),
     ClearNotifications,
+    ClearNotificationGroup(String),
+    ToggleNotificationExpanded(u32),
+    ToggleNotificationGroup(String),
 }
 
 impl cosmic::Application for App {
@@ -75,6 +82,8 @@ impl cosmic::Application for App {
                 notifications: NotificationStore::default(),
                 notifications_status: None,
                 notifications_tx: None,
+                expanded_cards: HashSet::new(),
+                expanded_groups: HashSet::new(),
                 config: ClockCenterConfig::default(),
             },
             Task::none(),
@@ -169,16 +178,39 @@ impl cosmic::Application for App {
             }
             Message::NotificationClosed(id) => {
                 self.notifications.dismiss(id);
+                self.prune_expansion();
                 Task::none()
             }
             Message::DismissNotification(id) => {
                 self.notifications.dismiss(id);
+                self.prune_expansion();
                 cosmic::iced::Task::future(channel::close_notifications(vec![id])).discard()
             }
             Message::ClearNotifications => {
                 let ids = self.notifications.ids();
                 self.notifications.clear();
+                self.prune_expansion();
                 cosmic::iced::Task::future(channel::close_notifications(ids)).discard()
+            }
+            Message::ClearNotificationGroup(app) => {
+                let ids = self.notifications.ids_for_app(&app);
+                for id in &ids {
+                    self.notifications.dismiss(*id);
+                }
+                self.prune_expansion();
+                cosmic::iced::Task::future(channel::close_notifications(ids)).discard()
+            }
+            Message::ToggleNotificationExpanded(id) => {
+                if !self.expanded_cards.remove(&id) {
+                    self.expanded_cards.insert(id);
+                }
+                Task::none()
+            }
+            Message::ToggleNotificationGroup(app) => {
+                if !self.expanded_groups.remove(&app) {
+                    self.expanded_groups.insert(app);
+                }
+                Task::none()
             }
             Message::ActivateNotification(id) => {
                 let Some(n) = self.notifications.get(id) else {
@@ -198,7 +230,10 @@ impl cosmic::Application for App {
                     .discard(),
                     // Nothing to activate: clicking just dismisses it.
                     (None, _) => cosmic::task::message(Message::DismissNotification(id)),
-                    (Some(_), None) => Task::none(),
+                    (Some(_), None) => {
+                        tracing::warn!("Activation for {id} ignored: notifications channel not ready");
+                        Task::none()
+                    }
                 }
             }
         }
@@ -267,7 +302,11 @@ impl cosmic::Application for App {
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
         let cal = crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week);
-        let notifs = notifications::view(&self.notifications, self.notifications_status.as_ref());
+        let notifs = notifications::view(
+            &self.notifications,
+            self.notifications_status.as_ref(),
+            notifications::Expansion { cards: &self.expanded_cards, groups: &self.expanded_groups },
+        );
         let content = column![notifs, cal].spacing(8);
         self.core.applet.popup_container(container(content).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
     }
@@ -278,6 +317,16 @@ impl cosmic::Application for App {
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::applet::style())
+    }
+}
+
+impl App {
+    /// Forget expansion state for notifications/groups that no longer exist.
+    fn prune_expansion(&mut self) {
+        let store = &self.notifications;
+        self.expanded_cards.retain(|id| store.contains(*id));
+        let apps: HashSet<String> = store.groups_newest_first().into_iter().map(|(a, _)| a).collect();
+        self.expanded_groups.retain(|a| apps.contains(a));
     }
 }
 

@@ -4,7 +4,7 @@ pub mod channel;
 mod view;
 
 pub use channel::ChannelStatus;
-pub use view::view;
+pub use view::{view, Expansion};
 
 use cosmic_notifications_util::Notification;
 use std::collections::HashSet;
@@ -57,6 +57,73 @@ impl NotificationStore {
     pub fn iter_newest_first(&self) -> impl Iterator<Item = &Notification> {
         self.items.iter().rev()
     }
+
+    /// Notifications grouped by app name; groups ordered by their newest
+    /// notification, newest first, and newest first within each group.
+    pub fn groups_newest_first(&self) -> Vec<(String, Vec<&Notification>)> {
+        let mut groups: Vec<(String, Vec<&Notification>)> = Vec::new();
+        for n in self.iter_newest_first() {
+            match groups.iter_mut().find(|(app, _)| *app == n.app_name) {
+                Some((_, ns)) => ns.push(n),
+                None => groups.push((n.app_name.clone(), vec![n])),
+            }
+        }
+        groups
+    }
+
+    /// Ids of all notifications from this app.
+    pub fn ids_for_app(&self, app_name: &str) -> Vec<u32> {
+        self.items.iter().filter(|n| n.app_name == app_name).map(|n| n.id).collect()
+    }
+
+    pub fn contains(&self, id: u32) -> bool {
+        self.items.iter().any(|n| n.id == id)
+    }
+}
+
+/// Plain-text body: tags stripped, lines trimmed, blank runs collapsed.
+pub fn normalize_body(body: &str) -> String {
+    let text = decode_entities(&strip_tags(body));
+    let mut out: Vec<&str> = Vec::new();
+    for line in text.lines().map(str::trim) {
+        if line.is_empty() && out.last().is_none_or(|l| l.is_empty()) {
+            continue;
+        }
+        out.push(line);
+    }
+    while out.last().is_some_and(|l| l.is_empty()) {
+        out.pop();
+    }
+    out.join("\n")
+}
+
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut in_tag = false;
+    for c in s.chars() {
+        match c {
+            '<' => in_tag = true,
+            '>' if in_tag => in_tag = false,
+            _ if !in_tag => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn decode_entities(s: &str) -> String {
+    s.replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&quot;", "\"")
+        .replace("&apos;", "'")
+        .replace("&#39;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&amp;", "&")
+}
+
+/// First non-empty line of a body, for the collapsed preview.
+pub fn first_line_preview(body: &str) -> String {
+    normalize_body(body).lines().next().unwrap_or_default().to_string()
 }
 
 #[cfg(test)]
@@ -69,9 +136,13 @@ mod tests {
     }
 
     fn n(id: u32) -> Notification {
+        na(id, "test")
+    }
+
+    fn na(id: u32, app: &str) -> Notification {
         Notification {
             id,
-            app_name: "test".into(),
+            app_name: app.into(),
             app_icon: String::new(),
             summary: format!("summary {id}"),
             body: String::new(),
@@ -87,4 +158,21 @@ mod tests {
     #[test] fn replace_keeps_single_entry() { let mut s = store(); s.push(n(7)); s.push(n(7)); assert_eq!(s.iter_newest_first().count(), 1); }
     #[test] fn dismiss_last_unread_clears_dot() { let mut s = store(); s.push(n(1)); s.dismiss(1); assert!(!s.has_unread()); }
     #[test] fn newest_first() { let mut s = store(); s.push(n(1)); s.push(n(2)); assert_eq!(s.iter_newest_first().next().unwrap().id, 2); }
+
+    #[test] fn groups_by_app_newest_first() {
+        let mut s = store();
+        s.push(na(1, "a")); s.push(na(2, "b")); s.push(na(3, "a"));
+        let g = s.groups_newest_first();
+        let ids: Vec<(String, Vec<u32>)> = g.into_iter().map(|(app, ns)| (app, ns.iter().map(|n| n.id).collect())).collect();
+        assert_eq!(ids, vec![("a".to_string(), vec![3, 1]), ("b".to_string(), vec![2])]);
+    }
+    #[test] fn body_lines_are_trimmed_and_blank_runs_collapsed() {
+        assert_eq!(normalize_body("\n   FIRING · 1\n\n\n   Kube…\n  vault\n"), "FIRING · 1\n\nKube…\nvault");
+    }
+    #[test] fn body_markup_is_stripped() {
+        assert_eq!(normalize_body("<b>Hi</b> &amp; <i>bye</i>"), "Hi & bye");
+    }
+    #[test] fn first_line_preview_returns_first_non_empty_line() {
+        assert_eq!(first_line_preview("\n  \n  hello \nworld"), "hello");
+    }
 }
