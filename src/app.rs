@@ -40,8 +40,10 @@ pub struct App {
     players: Vec<media::PlayerState>,
     /// Loaded album art for the shown player, keyed by its `file://` URL.
     media_art: Option<(String, cosmic::widget::icon::Handle)>,
-    #[allow(dead_code)]
     config: ClockCenterConfig,
+    timer: crate::timer::TimerState,
+    /// Latest `Instant` seen by a timer tick (drives the countdown view).
+    timer_now: std::time::Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -67,6 +69,9 @@ pub enum Message {
     DndChanged(bool),
     Players(Vec<media::PlayerState>),
     MediaCommand(String, media::MediaCommand),
+    StartTimer(u32),
+    CancelTimer,
+    TimerTick,
 }
 
 impl cosmic::Application for App {
@@ -97,6 +102,8 @@ impl cosmic::Application for App {
                 players: Vec::new(),
                 media_art: None,
                 config: ClockCenterConfig::default(),
+                timer: Default::default(),
+                timer_now: std::time::Instant::now(),
             },
             Task::none(),
         )
@@ -163,6 +170,27 @@ impl cosmic::Application for App {
             Message::NextMonth => {
                 self.date_selected = shift_month(self.date_selected, 1);
                 Task::none()
+            }
+            Message::StartTimer(m) => {
+                self.timer_now = std::time::Instant::now();
+                self.timer.start(m, self.timer_now);
+                Task::none()
+            }
+            Message::CancelTimer => {
+                self.timer.cancel();
+                Task::none()
+            }
+            Message::TimerTick => {
+                self.timer_now = std::time::Instant::now();
+                match self.timer.tick(self.timer_now) {
+                    Some(m) => Task::perform(crate::timer::send_done_notification(m), |r| {
+                        if let Err(err) = r {
+                            tracing::error!(?err, "Failed to send timer notification");
+                        }
+                        cosmic::Action::None
+                    }),
+                    None => Task::none(),
+                }
             }
             Message::Tick => {
                 self.now = jiff::Zoned::now();
@@ -296,8 +324,14 @@ impl cosmic::Application for App {
                 })
             })
         };
+        let timer_tick = if self.timer.current.is_some() {
+            cosmic::iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::TimerTick)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             tick,
+            timer_tick,
             rectangle_tracker_subscription(0).map(|e| Message::Rectangle(e.1)),
             self.core
                 .watch_config::<TimeAppletConfig>(config::TIME_CONFIG_ID)
@@ -356,7 +390,7 @@ impl cosmic::Application for App {
         if media::pick_player(&self.players).is_some() {
             content = content.push(media::view(&self.players, self.media_art.as_ref().map(|(_, h)| h)));
         }
-        let content = content.push(notifs).push(cal);
+        let content = content.push(notifs).push(cal).push(crate::timer::view(&self.config.timer_presets, &self.timer, self.timer_now));
         self.core.applet.popup_container(container(content).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
     }
 

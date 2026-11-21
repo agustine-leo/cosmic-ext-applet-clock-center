@@ -7,6 +7,7 @@ mod config;
 mod localize;
 mod media;
 mod notifications;
+mod timer;
 
 fn main() -> cosmic::iced::Result {
     // Default to info for this crate (fmt::init() alone filters everything below ERROR);
