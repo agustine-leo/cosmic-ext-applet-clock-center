@@ -29,6 +29,7 @@ pub fn view<'a>(
     store: &'a NotificationStore,
     status: Option<&'a ChannelStatus>,
     expansion: Expansion<'a>,
+    do_not_disturb: bool,
 ) -> Element<'a, Message> {
     let list: Element<'a, Message> = if let Some(ChannelStatus::Unavailable(reason)) = status {
         container(text::body(fl!("notifications-unavailable", reason = reason.as_str())))
@@ -58,12 +59,26 @@ pub fn view<'a>(
     };
 
     let clear = button::text(fl!("clear-all")).on_press_maybe((!store.is_empty()).then_some(Message::ClearNotifications));
-    let bottom = row![cosmic::widget::space::horizontal(), clear].align_y(Alignment::Center);
+    let bottom = bottom_row(do_not_disturb, clear.into());
 
     column![container(list).max_height(360.0), bottom]
         .spacing(4)
         .width(Length::Fill)
         .into()
+}
+
+/// Do Not Disturb toggler (left) and the Clear button (right).
+pub fn bottom_row<'a>(do_not_disturb: bool, clear: Element<'a, Message>) -> Element<'a, Message> {
+    row![
+        cosmic::widget::toggler(do_not_disturb)
+            .label(fl!("do-not-disturb"))
+            .on_toggle(Message::SetDnd)
+            .width(Length::Fill),
+        clear
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn one_line() -> Ellipsize {

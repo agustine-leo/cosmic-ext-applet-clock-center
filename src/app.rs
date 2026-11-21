@@ -35,6 +35,7 @@ pub struct App {
     expanded_cards: HashSet<u32>,
     /// App names whose group shows all cards, not only the newest.
     expanded_groups: HashSet<String>,
+    do_not_disturb: bool,
     #[allow(dead_code)]
     config: ClockCenterConfig,
 }
@@ -58,6 +59,8 @@ pub enum Message {
     ClearNotificationGroup(String),
     ToggleNotificationExpanded(u32),
     ToggleNotificationGroup(String),
+    SetDnd(bool),
+    DndChanged(bool),
 }
 
 impl cosmic::Application for App {
@@ -82,6 +85,7 @@ impl cosmic::Application for App {
                 notifications: NotificationStore::default(),
                 notifications_status: None,
                 notifications_tx: None,
+                do_not_disturb: notifications::dnd::read(),
                 expanded_cards: HashSet::new(),
                 expanded_groups: HashSet::new(),
                 config: ClockCenterConfig::default(),
@@ -212,6 +216,15 @@ impl cosmic::Application for App {
                 }
                 Task::none()
             }
+            Message::SetDnd(b) => {
+                self.do_not_disturb = b;
+                notifications::dnd::write(b);
+                Task::none()
+            }
+            Message::DndChanged(b) => {
+                self.do_not_disturb = b;
+                Task::none()
+            }
             Message::ActivateNotification(id) => {
                 let Some(n) = self.notifications.get(id) else {
                     return Task::none();
@@ -272,6 +285,14 @@ impl cosmic::Application for App {
                     }
                     Message::TimeConfigChanged(u.config)
                 }),
+            self.core
+                .watch_config::<cosmic_notifications_config::NotificationsConfig>(cosmic_notifications_config::ID)
+                .map(|u| {
+                    for err in u.errors {
+                        tracing::error!(?err, "Error watching notifications config");
+                    }
+                    Message::DndChanged(u.config.do_not_disturb)
+                }),
             notifications::channel::subscription(),
             notifications::channel::closed_subscription(),
         ])
@@ -306,6 +327,7 @@ impl cosmic::Application for App {
             &self.notifications,
             self.notifications_status.as_ref(),
             notifications::Expansion { cards: &self.expanded_cards, groups: &self.expanded_groups },
+            self.do_not_disturb,
         );
         let content = column![notifs, cal].spacing(8);
         self.core.applet.popup_container(container(content).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()

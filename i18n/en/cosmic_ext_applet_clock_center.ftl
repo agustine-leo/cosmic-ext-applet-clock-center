@@ -8,3 +8,4 @@ hours-ago = {$duration} h ago
 show-more = +{$more} more
 show-less = Show less
 unknown-app = Other
+do-not-disturb = Do Not Disturb
