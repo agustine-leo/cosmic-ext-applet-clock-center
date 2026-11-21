@@ -8,14 +8,16 @@ use cosmic::{
 };
 use std::sync::LazyLock;
 
+use cosmic::cosmic_config::CosmicConfigEntry;
+
 use crate::config::{self, ClockCenterConfig, TimeAppletConfig};
 
 static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
 
 pub struct App {
     core: Core,
-    #[allow(dead_code)]
     time_config: TimeAppletConfig,
+    now: jiff::Zoned,
     #[allow(dead_code)]
     config: ClockCenterConfig,
 }
@@ -24,6 +26,8 @@ pub struct App {
 pub enum Message {
     /// Placeholder until real messages land.
     Noop,
+    Tick,
+    TimeConfigChanged(TimeAppletConfig),
 }
 
 impl cosmic::Application for App {
@@ -36,7 +40,11 @@ impl cosmic::Application for App {
         (
             Self {
                 core,
-                time_config: TimeAppletConfig::default(),
+                time_config: cosmic::cosmic_config::Config::new(config::TIME_CONFIG_ID, TimeAppletConfig::VERSION)
+                    .ok()
+                    .and_then(|c| TimeAppletConfig::get_entry(&c).ok())
+                    .unwrap_or_default(),
+                now: jiff::Zoned::now(),
                 config: ClockCenterConfig::default(),
             },
             Task::none(),
@@ -54,16 +62,43 @@ impl cosmic::Application for App {
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
             Message::Noop => Task::none(),
+            Message::Tick => {
+                self.now = jiff::Zoned::now();
+                Task::none()
+            }
+            Message::TimeConfigChanged(c) => {
+                self.time_config = c;
+                self.now = jiff::Zoned::now();
+                Task::none()
+            }
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        Subscription::none()
+        let period = if self.time_config.show_seconds
+            || self.time_config.format_strftime.contains("%S")
+            || self.time_config.format_strftime.contains("%T")
+        {
+            std::time::Duration::from_secs(1)
+        } else {
+            std::time::Duration::from_secs(15)
+        };
+        Subscription::batch([
+            cosmic::iced::time::every(period).map(|_| Message::Tick),
+            self.core
+                .watch_config::<TimeAppletConfig>(config::TIME_CONFIG_ID)
+                .map(|u| {
+                    for err in u.errors {
+                        tracing::error!(?err, "Error watching time config");
+                    }
+                    Message::TimeConfigChanged(u.config)
+                }),
+        ])
     }
 
     fn view(&self) -> Element<'_, Message> {
         let padding = self.core.applet.suggested_padding(true).0;
-        let btn = button::custom(self.core.applet.text("clock-center"))
+        let btn = button::custom(self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config)))
             .padding([0, padding])
             .on_press(Message::Noop)
             .class(cosmic::theme::Button::AppletIcon);
