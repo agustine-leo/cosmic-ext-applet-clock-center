@@ -3,8 +3,7 @@
 One date/time button for the COSMIC panel: notifications, calendar, media and timers in one popup,
 laid out like GNOME's date menu.
 
-![Clock Center](screenshot.png)
-<!-- TODO: screenshot.png still has to be added (taken on a live session). -->
+Screenshot coming soon.
 
 ## Features
 
@@ -20,7 +19,8 @@ laid out like GNOME's date menu.
   - Right: month calendar (respects your first day of week) and quick timers.
 - **Quick timers**: one-click presets (default 1, 5, 10 and 25 minutes, configurable in
   `io.github.agustine_leo.CosmicExtAppletClockCenter`). A finished timer is sent as a
-  **critical** notification, which is meant to get through Do Not Disturb.
+  **critical** notification. COSMIC shows no banners under Do Not Disturb, so while it is on the
+  timer also plays the "complete" sound (`canberra-gtk-play`).
 - Do Not Disturb is the same setting COSMIC uses (`com.system76.CosmicNotifications`).
 - If the notifications socket is missing, the popup shows a warning instead of an empty list.
 
@@ -32,7 +32,12 @@ Remove it with `just uninstall` to get the stock applet back. Nothing is written
 
 ## Install
 
-Needs Rust and [just](https://github.com/casey/just).
+Build dependencies on Fedora:
+
+```sh
+sudo dnf install cargo just pkgconf libxkbcommon-devel wayland-devel expat-devel fontconfig-devel \
+    freetype-devel libinput-devel systemd-devel mesa-libEGL-devel
+```
 
 ```sh
 just install    # builds in release mode and installs to ~/.local
@@ -40,6 +45,9 @@ just uninstall  # removes the binary, desktop entry and icon
 ```
 
 The new applet is picked up the next time the panel starts (log out and back in).
+
+It shows its own clock, so remove COSMIC's time applet (`com.system76.CosmicAppletTime`) from the
+panel centre, and Dynamic Island too if you use it, or you will see two clocks.
 
 ## Credits
 

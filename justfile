@@ -10,7 +10,7 @@ icon-dst := prefix / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / appid
 default: build-release
 
 build-release *args:
-    cargo build --release {{args}}
+    cargo build --release --locked {{args}}
 
 install: build-release
     install -Dm0755 target/release/{{name}} {{bin-dst}}
