@@ -1,1 +1,7 @@
 app-title = Clock Center
+no-notifications = No notifications
+notifications-unavailable = Notifications unavailable: {$reason}
+clear-all = Clear
+just-now = now
+minutes-ago = {$duration} min ago
+hours-ago = {$duration} h ago

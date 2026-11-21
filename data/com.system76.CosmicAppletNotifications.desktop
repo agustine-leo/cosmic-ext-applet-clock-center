@@ -10,4 +10,5 @@ Icon=io.github.agustine_leo.CosmicExtAppletClockCenter
 NoDisplay=true
 X-CosmicApplet=true
 X-CosmicShrinkable=true
+X-NotificationsApplet=true
 X-OverflowPriority=10

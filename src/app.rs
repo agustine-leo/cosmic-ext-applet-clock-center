@@ -6,14 +6,17 @@ use cosmic::{
         platform_specific::shell::wayland::commands::popup::destroy_popup,
         window, Rectangle, Subscription,
     },
-    widget::{autosize, button, container, rectangle_tracker::*, Id},
+    widget::{autosize, button, column, container, rectangle_tracker::*, row, space, Id},
     Element,
 };
+use cosmic_notifications_util::{ActionId, Notification};
+use tokio::sync::mpsc;
 use std::sync::LazyLock;
 
 use cosmic::cosmic_config::CosmicConfigEntry;
 
 use crate::config::{self, ClockCenterConfig, TimeAppletConfig};
+use crate::notifications::{self, channel, ChannelStatus, NotificationStore};
 
 static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
 
@@ -25,6 +28,9 @@ pub struct App {
     rectangle_tracker: Option<RectangleTracker<u32>>,
     rectangle: Rectangle,
     date_selected: jiff::civil::Date,
+    notifications: NotificationStore,
+    notifications_status: Option<ChannelStatus>,
+    notifications_tx: Option<mpsc::Sender<channel::Input>>,
     #[allow(dead_code)]
     config: ClockCenterConfig,
 }
@@ -38,6 +44,13 @@ pub enum Message {
     NextMonth,
     Tick,
     TimeConfigChanged(TimeAppletConfig),
+    Notification(Notification),
+    ChannelStatus(ChannelStatus),
+    NotificationsInput(mpsc::Sender<channel::Input>),
+    NotificationClosed(u32),
+    DismissNotification(u32),
+    ActivateNotification(u32),
+    ClearNotifications,
 }
 
 impl cosmic::Application for App {
@@ -59,6 +72,9 @@ impl cosmic::Application for App {
                 rectangle_tracker: None,
                 rectangle: Rectangle::default(),
                 date_selected: jiff::Zoned::now().date(),
+                notifications: NotificationStore::default(),
+                notifications_status: None,
+                notifications_tx: None,
                 config: ClockCenterConfig::default(),
             },
             Task::none(),
@@ -83,6 +99,7 @@ impl cosmic::Application for App {
                     |_| Default::default(),
                     |app: &mut Self| {
                         app.date_selected = app.now.date();
+                        app.notifications.mark_all_read();
                         let new_id = window::Id::unique();
                         app.popup = Some(new_id);
                         let mut settings = app.core.applet.get_popup_settings(
@@ -135,6 +152,55 @@ impl cosmic::Application for App {
                 self.now = jiff::Zoned::now();
                 Task::none()
             }
+            Message::Notification(n) => {
+                self.notifications.push(n);
+                if self.popup.is_some() {
+                    self.notifications.mark_all_read();
+                }
+                Task::none()
+            }
+            Message::ChannelStatus(status) => {
+                self.notifications_status = Some(status);
+                Task::none()
+            }
+            Message::NotificationsInput(tx) => {
+                self.notifications_tx = Some(tx);
+                Task::none()
+            }
+            Message::NotificationClosed(id) => {
+                self.notifications.dismiss(id);
+                Task::none()
+            }
+            Message::DismissNotification(id) => {
+                self.notifications.dismiss(id);
+                cosmic::iced::Task::future(channel::close_notifications(vec![id])).discard()
+            }
+            Message::ClearNotifications => {
+                let ids = self.notifications.ids();
+                self.notifications.clear();
+                cosmic::iced::Task::future(channel::close_notifications(ids)).discard()
+            }
+            Message::ActivateNotification(id) => {
+                let Some(n) = self.notifications.get(id) else {
+                    return Task::none();
+                };
+                let action = if n.actions.iter().any(|a| matches!(a.0, ActionId::Default)) {
+                    Some(ActionId::Default.to_string())
+                } else {
+                    n.actions.first().map(|a| a.0.to_string())
+                };
+                match (action, self.notifications_tx.clone()) {
+                    (Some(action), Some(tx)) => cosmic::iced::Task::future(async move {
+                        if let Err(err) = tx.send(channel::Input::Activate(id, action)).await {
+                            tracing::error!("Failed to send activation for {id}: {err}");
+                        }
+                    })
+                    .discard(),
+                    // Nothing to activate: clicking just dismisses it.
+                    (None, _) => cosmic::task::message(Message::DismissNotification(id)),
+                    (Some(_), None) => Task::none(),
+                }
+            }
         }
     }
 
@@ -171,12 +237,20 @@ impl cosmic::Application for App {
                     }
                     Message::TimeConfigChanged(u.config)
                 }),
+            notifications::channel::subscription(),
+            notifications::channel::closed_subscription(),
         ])
     }
 
     fn view(&self) -> Element<'_, Message> {
         let padding = self.core.applet.suggested_padding(true).0;
-        let btn = button::custom(self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config)))
+        let label = self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config));
+        let content: Element<'_, Message> = if self.notifications.has_unread() {
+            row![label, unread_dot()].spacing(4).align_y(cosmic::iced::Alignment::Center).into()
+        } else {
+            label.into()
+        };
+        let btn = button::custom(content)
             .padding([0, padding])
             .on_press_down(Message::TogglePopup)
             .class(cosmic::theme::Button::AppletIcon);
@@ -193,7 +267,9 @@ impl cosmic::Application for App {
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
         let cal = crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week);
-        self.core.applet.popup_container(container(cal).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
+        let notifs = notifications::view(&self.notifications, self.notifications_status.as_ref());
+        let content = column![notifs, cal].spacing(8);
+        self.core.applet.popup_container(container(content).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
@@ -208,4 +284,15 @@ impl cosmic::Application for App {
 /// Move to the same day in an adjacent month, clamped to the month's length.
 fn shift_month(d: jiff::civil::Date, months: i32) -> jiff::civil::Date {
     d.checked_add(jiff::Span::new().months(months)).unwrap_or(d)
+}
+
+/// Small accent-coloured dot shown after the time while there are unread notifications.
+fn unread_dot() -> Element<'static, Message> {
+    container(space::horizontal().width(6).height(6))
+        .class(cosmic::theme::Container::custom(|theme| container::Style {
+            background: Some(cosmic::iced::Color::from(theme.cosmic().accent_color()).into()),
+            border: cosmic::iced::Border { radius: 3.0.into(), ..Default::default() },
+            ..Default::default()
+        }))
+        .into()
 }
