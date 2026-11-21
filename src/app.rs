@@ -22,7 +22,7 @@ use crate::notifications::{self, channel, ChannelStatus, NotificationStore};
 /// Popup column widths (~60/40) and minimum content height.
 const LEFT_WIDTH: f32 = 416.0;
 const RIGHT_WIDTH: f32 = 288.0;
-const MIN_HEIGHT: f32 = 520.0;
+const MIN_HEIGHT: f32 = 760.0;
 /// Popup padding (theme `space_s`) and gap between columns (theme `space_xs`).
 /// Fixed values, so the popup width matches the content exactly.
 const POPUP_PADDING: f32 = 16.0;
@@ -63,6 +63,8 @@ pub struct App {
     /// App names whose group shows all cards, not only the newest.
     expanded_groups: HashSet<String>,
     do_not_disturb: bool,
+    /// Do Not Disturb forced on while the popup is open (banners go to the list).
+    popup_dnd: notifications::dnd::PopupDnd,
     players: Vec<media::PlayerState>,
     /// Loaded album art for the shown player, keyed by its `file://` URL.
     media_art: Option<(String, cosmic::widget::icon::Handle)>,
@@ -96,6 +98,36 @@ pub enum Message {
     IndicatorFrame,
 }
 
+impl App {
+    fn popup_opened(&mut self) {
+        if let Some(v) = self.popup_dnd.on_open(self.do_not_disturb) {
+            if let Some(m) = notifications::dnd::marker_path() {
+                notifications::dnd::set_marker(&m, true);
+            }
+            notifications::dnd::write(v);
+        }
+    }
+
+    fn popup_closed(&mut self) {
+        if let Some(v) = self.popup_dnd.on_close() {
+            notifications::dnd::write(v);
+            if let Some(m) = notifications::dnd::marker_path() {
+                notifications::dnd::set_marker(&m, false);
+            }
+        }
+    }
+}
+
+/// Do Not Disturb at startup, undoing a value left forced by a crash while the popup was open.
+fn startup_dnd() -> bool {
+    if notifications::dnd::marker_path().is_some_and(|m| notifications::dnd::take_marker(&m)) {
+        tracing::warn!("Do Not Disturb was left on by an open popup; switching it back off");
+        notifications::dnd::write(false);
+        return false;
+    }
+    notifications::dnd::read()
+}
+
 impl cosmic::Application for App {
     type Message = Message;
     type Executor = cosmic::SingleThreadExecutor;
@@ -118,7 +150,8 @@ impl cosmic::Application for App {
                 notifications: NotificationStore::default(),
                 notifications_status: None,
                 notifications_tx: None,
-                do_not_disturb: notifications::dnd::read(),
+                do_not_disturb: startup_dnd(),
+                popup_dnd: Default::default(),
                 expanded_cards: HashSet::new(),
                 expanded_groups: HashSet::new(),
                 players: Vec::new(),
@@ -141,6 +174,7 @@ impl cosmic::Application for App {
         match message {
             Message::TogglePopup => {
                 if let Some(p) = self.popup.take() {
+                    self.popup_closed();
                     return destroy_popup(p);
                 }
                 return cosmic::surface::surface_task(cosmic::surface::action::app_popup(
@@ -148,6 +182,7 @@ impl cosmic::Application for App {
                     |app: &mut Self| {
                         app.date_selected = app.now.date();
                         app.notifications.mark_all_read();
+                        app.popup_opened();
                         let new_id = window::Id::unique();
                         app.popup = Some(new_id);
                         let mut settings = app.core.applet.get_popup_settings(
@@ -174,6 +209,7 @@ impl cosmic::Application for App {
             Message::CloseRequested(id) => {
                 if Some(id) == self.popup {
                     self.popup = None;
+                    self.popup_closed();
                 }
                 Task::none()
             }
@@ -258,10 +294,18 @@ impl cosmic::Application for App {
             }
             Message::SetDnd(b) => {
                 self.do_not_disturb = b;
+                self.popup_dnd.on_user_set();
+                if let Some(m) = notifications::dnd::marker_path() {
+                    notifications::dnd::set_marker(&m, false);
+                }
                 notifications::dnd::write(b);
                 Task::none()
             }
             Message::DndChanged(b) => {
+                // Our own forced `true` while the popup is open is not the user's setting.
+                if self.popup_dnd.forced() && b {
+                    return Task::none();
+                }
                 self.do_not_disturb = b;
                 Task::none()
             }
@@ -298,7 +342,10 @@ impl cosmic::Application for App {
                         .discard();
                         // Close the popup after activating, like GNOME and the stock applet.
                         match self.popup.take() {
-                            Some(p) => Task::batch([activate, destroy_popup(p)]),
+                            Some(p) => {
+                                self.popup_closed();
+                                Task::batch([activate, destroy_popup(p)])
+                            }
                             None => activate,
                         }
                     }

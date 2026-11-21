@@ -21,6 +21,64 @@ pub fn write(value: bool) {
     }
 }
 
+/// While the popup is open, banners are suppressed by switching Do Not Disturb
+/// on, so new notifications land in the list instead of popping over it
+/// (GNOME behaviour). Only a value this applet forced is undone on close.
+#[derive(Debug, Default)]
+pub struct PopupDnd {
+    forced: bool,
+}
+
+impl PopupDnd {
+    /// Popup opened; returns the value to write, if any.
+    pub fn on_open(&mut self, user_dnd: bool) -> Option<bool> {
+        self.forced = !user_dnd;
+        self.forced.then_some(true)
+    }
+
+    /// Popup closed; returns the value to write, if any.
+    pub fn on_close(&mut self) -> Option<bool> {
+        std::mem::take(&mut self.forced).then_some(false)
+    }
+
+    /// The user toggled Do Not Disturb themselves: their choice wins.
+    pub fn on_user_set(&mut self) {
+        self.forced = false;
+    }
+
+    pub fn forced(&self) -> bool {
+        self.forced
+    }
+}
+
+/// Marker recording that Do Not Disturb is currently forced by an open popup,
+/// so a crash can be repaired at the next start.
+pub fn marker_path() -> Option<std::path::PathBuf> {
+    let state = std::env::var_os("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| std::path::PathBuf::from(h).join(".local/state")))?;
+    Some(state.join("cosmic-ext-applet-clock-center").join("dnd-forced"))
+}
+
+pub fn set_marker(path: &std::path::Path, present: bool) {
+    let result = if present {
+        path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|()| std::fs::write(path, b""))
+    } else {
+        match std::fs::remove_file(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            r => r,
+        }
+    };
+    if let Err(err) = result {
+        tracing::warn!(?err, ?path, "Failed to update dnd-forced marker");
+    }
+}
+
+/// True (and removes it) if a marker was left behind.
+pub fn take_marker(path: &std::path::Path) -> bool {
+    std::fs::remove_file(path).is_ok()
+}
+
 fn read_from(h: &Config) -> bool {
     match NotificationsConfig::get_entry(h) {
         Ok(c) => c.do_not_disturb,
@@ -42,6 +100,45 @@ fn write_to(h: &Config, value: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn opening_forces_dnd_only_when_it_is_off() {
+        let mut p = PopupDnd::default();
+        assert_eq!(p.on_open(false), Some(true));
+        assert!(p.forced());
+        let mut q = PopupDnd::default();
+        assert_eq!(q.on_open(true), None);
+        assert!(!q.forced());
+    }
+
+    #[test]
+    fn closing_restores_only_what_was_forced() {
+        let mut p = PopupDnd::default();
+        p.on_open(false);
+        assert_eq!(p.on_close(), Some(false));
+        assert_eq!(p.on_close(), None);
+        let mut q = PopupDnd::default();
+        q.on_open(true);
+        assert_eq!(q.on_close(), None);
+    }
+
+    #[test]
+    fn user_toggle_while_open_cancels_forcing() {
+        let mut p = PopupDnd::default();
+        p.on_open(false);
+        p.on_user_set();
+        assert_eq!(p.on_close(), None);
+    }
+
+    #[test]
+    fn recover_clears_a_leftover_marker_once() {
+        let dir = std::env::temp_dir().join(format!("dnd-marker-{}", std::process::id()));
+        let marker = dir.join("dnd-forced");
+        set_marker(&marker, true);
+        assert!(take_marker(&marker));
+        assert!(!take_marker(&marker));
+        let _ = std::fs::remove_dir_all(dir);
+    }
 
     #[test]
     fn write_then_read_roundtrip() {
