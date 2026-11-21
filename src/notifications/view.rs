@@ -24,7 +24,8 @@ pub struct Expansion<'a> {
     pub groups: &'a HashSet<String>,
 }
 
-/// Notifications grouped per app, with a bottom row holding Clear.
+/// Notifications grouped per app filling the available height, with the
+/// DND/Clear row pinned at the bottom.
 pub fn view<'a>(
     store: &'a NotificationStore,
     status: Option<&'a ChannelStatus>,
@@ -46,7 +47,7 @@ pub fn view<'a>(
             .align_x(Alignment::Center),
         )
         .padding([8, 0])
-        .center_x(Length::Fill)
+        .center(Length::Fill)
         .into()
     } else {
         let groups = store
@@ -54,16 +55,17 @@ pub fn view<'a>(
             .into_iter()
             .map(|(app, ns)| group(app, ns, &expansion));
         scrollable(Column::with_children(groups).spacing(12).width(Length::Fill))
-            .height(Length::Shrink)
+            .height(Length::Fill)
             .into()
     };
 
     let clear = button::text(fl!("clear-all")).on_press_maybe((!store.is_empty()).then_some(Message::ClearNotifications));
     let bottom = bottom_row(do_not_disturb, clear.into());
 
-    column![container(list).max_height(360.0), bottom]
-        .spacing(4)
+    column![container(list).width(Length::Fill).height(Length::Fill), bottom]
+        .spacing(8)
         .width(Length::Fill)
+        .height(Length::Fill)
         .into()
 }
 

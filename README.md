@@ -1,21 +1,45 @@
 # cosmic-ext-applet-clock-center
 
-One date/time button for the COSMIC panel: notifications, calendar, media and timers in one popup.
+One date/time button for the COSMIC panel: notifications, calendar, media and timers in one popup,
+laid out like GNOME's date menu.
 
-Work in progress.
+![Clock Center](screenshot.png)
+<!-- TODO: screenshot.png still has to be added (taken on a live session). -->
+
+## Features
+
+- **Panel button**: the time/date label, using the settings of COSMIC's own time applet
+  (`com.system76.CosmicAppletTime`: 24h, seconds, weekday, date, custom strftime format).
+  An accent dot shows next to it while there are unread notifications, and four animated
+  equalizer bars show while a media player is playing. Nothing extra is shown or animated otherwise.
+- **Two-column popup**:
+  - Left: media controls for the current MPRIS player (if any), then the notification list
+    grouped per app as compact cards (expand long bodies, show older cards per app, dismiss one
+    or a whole group, click to activate), with the **Do Not Disturb** toggle and **Clear** button
+    pinned at the bottom.
+  - Right: month calendar (respects your first day of week) and quick timers.
+- **Quick timers**: one-click presets (default 1, 5, 10 and 25 minutes, configurable in
+  `io.github.agustine_leo.CosmicExtAppletClockCenter`). A finished timer is sent as a
+  **critical** notification, which is meant to get through Do Not Disturb.
+- Do Not Disturb is the same setting COSMIC uses (`com.system76.CosmicNotifications`).
+- If the notifications socket is missing, the popup shows a warning instead of an empty list.
 
 ## Warning: replaces the stock notifications applet
 
 This applet installs under the desktop id `com.system76.CosmicAppletNotifications`. Anywhere the panel is
-configured to launch the stock notifications applet, it launches this one instead. Remove it with
-`just uninstall` to get the stock applet back. Nothing is written outside `~/.local`.
+configured to launch COSMIC's notifications applet, it launches this one instead, for your user only.
+Remove it with `just uninstall` to get the stock applet back. Nothing is written outside `~/.local`.
 
 ## Install
 
+Needs Rust and [just](https://github.com/casey/just).
+
 ```sh
-just install    # builds, installs to ~/.local, then restart the panel: pkill -x cosmic-panel
-just uninstall
+just install    # builds in release mode and installs to ~/.local
+just uninstall  # removes the binary, desktop entry and icon
 ```
+
+The new applet is picked up the next time the panel starts (log out and back in).
 
 ## Credits
 

@@ -19,6 +19,25 @@ use crate::config::{self, ClockCenterConfig, TimeAppletConfig};
 use crate::media;
 use crate::notifications::{self, channel, ChannelStatus, NotificationStore};
 
+/// Popup column widths (~60/40) and minimum content height.
+const LEFT_WIDTH: f32 = 416.0;
+const RIGHT_WIDTH: f32 = 288.0;
+const MIN_HEIGHT: f32 = 520.0;
+const POPUP_PADDING: f32 = 8.0;
+const COLUMN_SPACING: f32 = 12.0;
+/// Two columns, the divider and the min-height spacer, with spacing and padding.
+const POPUP_WIDTH: f32 = LEFT_WIDTH + RIGHT_WIDTH + 1.0 + 3.0 * COLUMN_SPACING + 2.0 * POPUP_PADDING;
+const POPUP_MAX_HEIGHT: f32 = 1000.0;
+
+/// libcosmic caps applet popups at 360px wide; this popup needs more.
+fn popup_limits() -> cosmic::iced::Limits {
+    cosmic::iced::Limits::NONE
+        .min_width(POPUP_WIDTH)
+        .max_width(POPUP_WIDTH)
+        .min_height(1.0)
+        .max_height(POPUP_MAX_HEIGHT)
+}
+
 static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
 
 pub struct App {
@@ -44,6 +63,8 @@ pub struct App {
     timer: crate::timer::TimerState,
     /// Latest `SystemTime` seen by a timer tick (drives the countdown view).
     timer_now: std::time::SystemTime,
+    /// Animation frame of the playing indicator.
+    indicator_frame: u32,
 }
 
 #[derive(Debug, Clone)]
@@ -73,6 +94,7 @@ pub enum Message {
     StartTimer(u32),
     CancelTimer,
     TimerTick,
+    IndicatorFrame,
 }
 
 impl cosmic::Application for App {
@@ -118,6 +140,7 @@ impl cosmic::Application for App {
                 .sanitized(),
                 timer: Default::default(),
                 timer_now: std::time::SystemTime::now(),
+                indicator_frame: 0,
             },
             Task::none(),
         )
@@ -159,6 +182,7 @@ impl cosmic::Application for App {
                             height: height.max(1.) as i32,
                         };
                         settings.positioner.size = None;
+                        settings.positioner.size_limits = popup_limits();
                         settings
                     },
                     None,
@@ -205,6 +229,10 @@ impl cosmic::Application for App {
                     }),
                     None => Task::none(),
                 }
+            }
+            Message::IndicatorFrame => {
+                self.indicator_frame = self.indicator_frame.wrapping_add(1);
+                Task::none()
             }
             Message::Tick => {
                 self.now = jiff::Zoned::now();
@@ -347,9 +375,16 @@ impl cosmic::Application for App {
         } else {
             Subscription::none()
         };
+        // Only animate while something is playing: no ticking otherwise.
+        let indicator_tick = if media::any_playing(&self.players) {
+            cosmic::iced::time::every(std::time::Duration::from_millis(166)).map(|_| Message::IndicatorFrame)
+        } else {
+            Subscription::none()
+        };
         Subscription::batch([
             tick,
             timer_tick,
+            indicator_tick,
             rectangle_tracker_subscription(0).map(|e| Message::Rectangle(e.1)),
             self.core
                 .watch_config::<TimeAppletConfig>(config::TIME_CONFIG_ID)
@@ -384,11 +419,14 @@ impl cosmic::Application for App {
     fn view(&self) -> Element<'_, Message> {
         let padding = self.core.applet.suggested_padding(true).0;
         let label = self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config));
-        let content: Element<'_, Message> = if self.notifications.has_unread() {
-            row![label, unread_dot()].spacing(4).align_y(cosmic::iced::Alignment::Center).into()
-        } else {
-            label.into()
-        };
+        let mut content = row![].spacing(4).align_y(cosmic::iced::Alignment::Center);
+        if media::any_playing(&self.players) {
+            content = content.push(crate::indicator::view(self.indicator_frame));
+        }
+        content = content.push(label);
+        if self.notifications.has_unread() {
+            content = content.push(unread_dot());
+        }
         let btn = button::custom(content)
             .padding([0, padding])
             .on_press_down(Message::TogglePopup)
@@ -405,19 +443,44 @@ impl cosmic::Application for App {
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
-        let cal = crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week);
-        let notifs = notifications::view(
+        use cosmic::iced::Length;
+        use cosmic::widget::divider;
+
+        // Left: media (if any), notifications filling the column, DND/Clear pinned at the bottom.
+        let mut left = column![].spacing(12).width(Length::Fixed(LEFT_WIDTH)).height(Length::Fill);
+        if media::pick_player(&self.players).is_some() {
+            left = left.push(media::view(&self.players, self.media_art.as_ref().map(|(_, h)| h)));
+        }
+        left = left.push(notifications::view(
             &self.notifications,
             self.notifications_status.as_ref(),
             notifications::Expansion { cards: &self.expanded_cards, groups: &self.expanded_groups },
             self.do_not_disturb,
-        );
-        let mut content = column![].spacing(8);
-        if media::pick_player(&self.players).is_some() {
-            content = content.push(media::view(&self.players, self.media_art.as_ref().map(|(_, h)| h)));
-        }
-        let content = content.push(notifs).push(cal).push(crate::timer::view(&self.config.timer_presets, &self.timer, self.timer_now));
-        self.core.applet.popup_container(container(content).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
+        ));
+
+        // Right: calendar, divider, timers. Its height (or MIN_HEIGHT) sets the popup height.
+        let right = column![
+            crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week),
+            divider::horizontal::default(),
+            crate::timer::view(&self.config.timer_presets, &self.timer, self.timer_now),
+        ]
+        .spacing(12)
+        .width(Length::Fixed(RIGHT_WIDTH));
+
+        // The left column and the divider are Fill-height, so the row takes the
+        // height of the right column, never of the notification list.
+        let content = row![
+            left,
+            divider::vertical::default(),
+            right,
+            space::vertical().width(Length::Fixed(0.0)).height(Length::Fixed(MIN_HEIGHT)),
+        ]
+        .spacing(COLUMN_SPACING);
+        self.core
+            .applet
+            .popup_container(container(content).padding(POPUP_PADDING))
+            .limits(popup_limits())
+            .into()
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {

@@ -4,6 +4,7 @@ mod app;
 mod calendar;
 mod clock;
 mod config;
+mod indicator;
 mod localize;
 mod media;
 mod notifications;
