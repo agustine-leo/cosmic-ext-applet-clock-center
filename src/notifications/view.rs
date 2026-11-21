@@ -115,17 +115,27 @@ fn group<'a>(app: String, ns: Vec<&'a Notification>, expansion: &Expansion<'_>) 
 fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
     let body = normalize_body(&n.body);
     let preview = first_line_preview(&n.body);
-    let expandable = body != preview || preview.chars().count() > 40;
+    let summary_line = n.summary.lines().next().unwrap_or_default().trim();
+    // The text column is narrow (~25-30 chars), so offer expansion whenever
+    // there is any body or the summary may be cut off.
+    let expandable =
+        !body.is_empty() || summary_line.chars().count() > 20 || n.summary.trim().contains('\n');
 
-    let summary = text::heading(n.summary.lines().next().unwrap_or_default().trim().to_string())
-        .ellipsize(one_line())
-        .width(Length::Fill);
-    let title_row = row![summary, text::caption(duration_ago(n)).class(cosmic::theme::Text::Custom(dim_text))]
-        .spacing(8)
-        .align_y(Alignment::Center);
+    let title_row = if expanded {
+        row![text::heading(n.summary.trim().to_string()).width(Length::Fill), time_text(n)]
+    } else {
+        row![
+            text::heading(summary_line.to_string()).ellipsize(one_line()).width(Length::Fill),
+            time_text(n)
+        ]
+    }
+    .spacing(8)
+    .align_y(Alignment::Start);
     let mut content = column![title_row].spacing(2).width(Length::Fill);
     if expanded {
-        content = content.push(text::body(body).width(Length::Fill));
+        if !body.is_empty() {
+            content = content.push(text::body(body).width(Length::Fill));
+        }
     } else if !preview.is_empty() {
         content = content.push(text::body(preview).ellipsize(one_line()).width(Length::Fill));
     }
@@ -153,6 +163,10 @@ fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
     .class(cosmic::theme::Container::Card)
     .width(Length::Fill)
     .into()
+}
+
+fn time_text(n: &Notification) -> Element<'static, Message> {
+    text::caption(duration_ago(n)).class(cosmic::theme::Text::Custom(dim_text)).into()
 }
 
 fn dim_text(theme: &cosmic::Theme) -> cosmic::iced::widget::text::Style {

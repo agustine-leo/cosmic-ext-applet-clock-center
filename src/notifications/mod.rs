@@ -97,17 +97,24 @@ pub fn normalize_body(body: &str) -> String {
     out.join("\n")
 }
 
+/// Remove `<tag>`s; a `<` only starts a tag when followed by a letter or `/`
+/// and a closing `>` exists, so plain comparisons like "x < 5" survive.
 fn strip_tags(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
-    let mut in_tag = false;
-    for c in s.chars() {
-        match c {
-            '<' => in_tag = true,
-            '>' if in_tag => in_tag = false,
-            _ if !in_tag => out.push(c),
-            _ => {}
+    let mut rest = s;
+    while let Some(i) = rest.find('<') {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let starts_tag = after.starts_with(|c: char| c.is_ascii_alphabetic() || c == '/');
+        match after.find('>').filter(|_| starts_tag) {
+            Some(end) => rest = &after[end + 1..],
+            None => {
+                out.push('<');
+                rest = after;
+            }
         }
     }
+    out.push_str(rest);
     out
 }
 
@@ -174,5 +181,9 @@ mod tests {
     }
     #[test] fn first_line_preview_returns_first_non_empty_line() {
         assert_eq!(first_line_preview("\n  \n  hello \nworld"), "hello");
+    }
+    #[test] fn strip_tags_keeps_plain_angle_brackets() {
+        assert_eq!(normalize_body("x < 5 and y > 3"), "x < 5 and y > 3");
+        assert_eq!(normalize_body("<b>bold</b> a<3"), "bold a<3");
     }
 }
