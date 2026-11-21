@@ -87,8 +87,20 @@ fn one_line() -> Ellipsize {
     Ellipsize::End(EllipsizeHeightLimit::Lines(1))
 }
 
+/// Dismiss glyph, embedded so icon themes that blank `window-close-symbolic`
+/// (to hide titlebar close buttons) do not hide it.
+const CLOSE_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path fill="#232323" d="M4.3 4.3a1 1 0 0 1 1.4 0L8 6.6l2.3-2.3a1 1 0 1 1 1.4 1.4L9.4 8l2.3 2.3a1 1 0 0 1-1.4 1.4L8 9.4l-2.3 2.3a1 1 0 0 1-1.4-1.4L6.6 8 4.3 5.7a1 1 0 0 1 0-1.4z"/></svg>"##;
+
 fn small_icon_button(name: &'static str, msg: Message) -> Element<'static, Message> {
     button::custom(icon::from_name(name).size(16).symbolic(true))
+        .on_press(msg)
+        .padding(2)
+        .class(cosmic::theme::Button::Text)
+        .into()
+}
+
+fn close_button(msg: Message) -> Element<'static, Message> {
+    button::custom(icon::icon(icon::from_svg_bytes(CLOSE_SVG).symbolic(true)).size(16))
         .on_press(msg)
         .padding(2)
         .class(cosmic::theme::Button::Text)
@@ -101,7 +113,7 @@ fn group<'a>(app: String, ns: Vec<&'a Notification>, expansion: &Expansion<'_>) 
     let app_label = if app.is_empty() { fl!("unknown-app") } else { app.clone() };
     let header = row![
         text::caption_heading(app_label).ellipsize(one_line()).width(Length::Fill),
-        small_icon_button("window-close-symbolic", Message::ClearNotificationGroup(app.clone())),
+        close_button(Message::ClearNotificationGroup(app.clone())),
     ]
     .spacing(8)
     .padding([0, 4])
@@ -127,34 +139,52 @@ fn group<'a>(app: String, ns: Vec<&'a Notification>, expansion: &Expansion<'_>) 
     col.into()
 }
 
-/// A rounded card: 32px icon, bold summary + time, one body line (or the
-/// full body when expanded), then the expand chevron and dismiss button.
-fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
+/// Text a card shows: summary (one line unless expanded), and the body (first
+/// line when collapsed, all of it when expanded) if there is one.
+#[derive(Debug, PartialEq, Eq)]
+struct CardText {
+    summary: String,
+    body: Option<String>,
+    expandable: bool,
+}
+
+fn card_text(n: &Notification, expanded: bool) -> CardText {
     let body = normalize_body(&n.body);
-    let preview = first_line_preview(&n.body);
     let summary_line = n.summary.lines().next().unwrap_or_default().trim();
     // The text column is narrow (~25-30 chars), so offer expansion whenever
     // there is any body or the summary may be cut off.
-    let expandable =
-        !body.is_empty() || summary_line.chars().count() > 20 || n.summary.trim().contains('\n');
-
-    let title_row = if expanded {
-        row![text::heading(n.summary.trim().to_string()).width(Length::Fill), time_text(n)]
+    let expandable = !body.is_empty() || summary_line.chars().count() > 20 || n.summary.trim().contains('\n');
+    let (summary, body) = if expanded {
+        (n.summary.trim().to_string(), body)
     } else {
-        row![
-            text::heading(summary_line.to_string()).ellipsize(one_line()).width(Length::Fill),
-            time_text(n)
-        ]
-    }
-    .spacing(8)
-    .align_y(Alignment::Start);
+        (summary_line.to_string(), first_line_preview(&n.body))
+    };
+    CardText { summary, body: (!body.is_empty()).then_some(body), expandable }
+}
+
+/// A rounded card: 32px icon, bold summary + time, one body line (or the
+/// full body when expanded), then the expand chevron and dismiss button.
+///
+/// Layout: `container(Card, Fill) > row(Fill) [ mouse_area(row(Fill) [icon, text column(Fill)]), controls ]`.
+/// The icon + text area is the activate target; the chevron and dismiss buttons are
+/// its siblings, so pressing them never activates the notification. Text is not inside
+/// a `Button::Transparent` (whose text colour is fully transparent in libcosmic).
+fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
+    let t = card_text(n, expanded);
+
+    let summary = if expanded {
+        text::heading(t.summary).width(Length::Fill)
+    } else {
+        text::heading(t.summary).ellipsize(one_line()).width(Length::Fill)
+    };
+    let title_row = row![summary, time_text(n)].spacing(8).align_y(Alignment::Start).width(Length::Fill);
     let mut content = column![title_row].spacing(2).width(Length::Fill);
-    if expanded {
-        if !body.is_empty() {
-            content = content.push(text::body(body).width(Length::Fill));
-        }
-    } else if !preview.is_empty() {
-        content = content.push(text::body(preview).ellipsize(one_line()).width(Length::Fill));
+    if let Some(body) = t.body {
+        content = content.push(if expanded {
+            text::body(body).width(Length::Fill)
+        } else {
+            text::body(body).ellipsize(one_line()).width(Length::Fill)
+        });
     }
 
     let app_icon = n
@@ -162,24 +192,24 @@ fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
         .unwrap_or_else(|| icon::from_name("cosmic-applet-notification-symbolic").symbolic(true).icon())
         .size(32);
 
+    let body_area = cosmic::widget::mouse_area(
+        row![app_icon, content].spacing(12).align_y(Alignment::Center).width(Length::Fill),
+    )
+    .on_press(Message::ActivateNotification(n.id))
+    .interaction(cosmic::iced::mouse::Interaction::Pointer);
+
     let mut controls = row![].spacing(2).align_y(Alignment::Center);
-    if expandable {
+    if t.expandable {
         let chevron = if expanded { "go-up-symbolic" } else { "go-down-symbolic" };
         controls = controls.push(small_icon_button(chevron, Message::ToggleNotificationExpanded(n.id)));
     }
-    controls = controls.push(small_icon_button("window-close-symbolic", Message::DismissNotification(n.id)));
+    controls = controls.push(close_button(Message::DismissNotification(n.id)));
 
-    let inner = row![app_icon, content, controls].spacing(12).align_y(Alignment::Center);
-    container(
-        button::custom(inner)
-            .on_press(Message::ActivateNotification(n.id))
-            .class(cosmic::theme::Button::Transparent)
-            .padding(12)
-            .width(Length::Fill),
-    )
-    .class(cosmic::theme::Container::Card)
-    .width(Length::Fill)
-    .into()
+    container(row![body_area, controls].spacing(8).align_y(Alignment::Center).width(Length::Fill))
+        .padding(12)
+        .class(cosmic::theme::Container::Card)
+        .width(Length::Fill)
+        .into()
 }
 
 fn time_text(n: &Notification) -> Element<'static, Message> {
@@ -202,5 +232,59 @@ fn duration_ago(n: &Notification) -> String {
         fl!("minutes-ago", duration = min)
     } else {
         fl!("just-now")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::SystemTime;
+
+    fn flameshot() -> Notification {
+        Notification {
+            id: 1,
+            app_name: "flameshot".into(),
+            app_icon: String::new(),
+            summary: "Flameshot Info".into(),
+            body: "Screenshot aborted.".into(),
+            actions: Vec::new(),
+            hints: Vec::new(),
+            expire_timeout: -1,
+            time: SystemTime::now(),
+        }
+    }
+
+    #[test]
+    fn collapsed_card_shows_summary_and_preview() {
+        let t = card_text(&flameshot(), false);
+        assert_eq!(t.summary, "Flameshot Info");
+        assert_eq!(t.body.as_deref(), Some("Screenshot aborted."));
+        assert!(t.expandable);
+    }
+
+    #[test]
+    fn expanded_card_shows_full_body() {
+        let mut n = flameshot();
+        n.body = "line one\nline two".into();
+        let t = card_text(&n, true);
+        assert_eq!(t.body.as_deref(), Some("line one\nline two"));
+        assert_eq!(card_text(&n, false).body.as_deref(), Some("line one"));
+    }
+
+    #[test]
+    fn summary_only_card_has_no_body_line() {
+        let mut n = flameshot();
+        n.body = String::new();
+        n.summary = "Short".into();
+        let t = card_text(&n, false);
+        assert_eq!(t.summary, "Short");
+        assert_eq!(t.body, None);
+        assert!(!t.expandable);
+    }
+
+    #[test]
+    fn dismiss_icon_does_not_depend_on_icon_theme() {
+        // Themes may blank window-close-symbolic (e.g. to hide titlebar close buttons).
+        assert!(std::str::from_utf8(CLOSE_SVG).unwrap().contains("<path"));
     }
 }
