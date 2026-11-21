@@ -75,10 +75,13 @@ pub fn view<'a>(
 /// Do Not Disturb toggler (left) and the Clear button (right).
 pub fn bottom_row<'a>(do_not_disturb: bool, clear: Element<'a, Message>) -> Element<'a, Message> {
     row![
+        // Label and switch stay together on the left (GNOME); the gap goes before Clear.
         cosmic::widget::toggler(do_not_disturb)
             .label(fl!("do-not-disturb"))
             .on_toggle(Message::SetDnd)
-            .width(Length::Fill),
+            .spacing(cosmic::theme::spacing().space_xs)
+            .width(Length::Shrink),
+        cosmic::widget::Space::new().width(Length::Fill),
         clear
     ]
     .spacing(cosmic::theme::spacing().space_xxs)

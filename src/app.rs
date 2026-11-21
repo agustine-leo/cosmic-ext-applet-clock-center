@@ -41,7 +41,7 @@ fn popup_limits() -> cosmic::iced::Limits {
     cosmic::iced::Limits::NONE
         .min_width(POPUP_WIDTH)
         .max_width(POPUP_WIDTH)
-        .min_height(1.0)
+        .min_height(MIN_HEIGHT + 2.0 * POPUP_PADDING)
         .max_height(POPUP_MAX_HEIGHT)
 }
 
@@ -462,19 +462,21 @@ impl cosmic::Application for App {
             self.do_not_disturb,
         ));
 
-        // Right: calendar. Its height (or MIN_HEIGHT, via the zero-width spacer) sets the popup height.
-        let right = row![
-            column![crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week)]
-                .width(Length::Fixed(RIGHT_WIDTH)),
-            space::vertical().width(Length::Fixed(0.0)).height(Length::Fixed(MIN_HEIGHT)),
-        ];
+        // Right: calendar.
+        let right = column![crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week)]
+            .width(Length::Fixed(RIGHT_WIDTH));
 
-        // The left column and the divider are Fill-height, so the row takes the
-        // height of the right column, never of the notification list.
+        // Fixed height, matching the popup window (popup_limits): the visible box is
+        // drawn only as tall as its content, so it must not shrink to the calendar.
+        // A long notification list scrolls inside the left column.
         let content = row![left, divider::vertical::default(), right].spacing(COLUMN_SPACING);
         self.core
             .applet
-            .popup_container(container(content).padding(POPUP_PADDING))
+            .popup_container(
+                container(content)
+                    .padding(POPUP_PADDING)
+                    .height(Length::Fixed(MIN_HEIGHT + 2.0 * POPUP_PADDING)),
+            )
             .limits(popup_limits())
             .into()
     }
@@ -517,6 +519,11 @@ fn unread_dot() -> Element<'static, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn popup_surface_enforces_min_height() {
+        assert_eq!(popup_limits().min().height, MIN_HEIGHT + 2.0 * POPUP_PADDING);
+    }
 
     #[test]
     fn popup_width_matches_layout() {
