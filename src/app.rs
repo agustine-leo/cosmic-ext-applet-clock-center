@@ -2,8 +2,11 @@
 
 use cosmic::{
     app::{Core, Task},
-    iced::Subscription,
-    widget::{autosize, button, Id},
+    iced::{
+        platform_specific::shell::wayland::commands::popup::destroy_popup,
+        window, Rectangle, Subscription,
+    },
+    widget::{autosize, button, container, rectangle_tracker::*, Id},
     Element,
 };
 use std::sync::LazyLock;
@@ -18,14 +21,21 @@ pub struct App {
     core: Core,
     time_config: TimeAppletConfig,
     now: jiff::Zoned,
+    popup: Option<window::Id>,
+    rectangle_tracker: Option<RectangleTracker<u32>>,
+    rectangle: Rectangle,
+    date_selected: jiff::civil::Date,
     #[allow(dead_code)]
     config: ClockCenterConfig,
 }
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    /// Placeholder until real messages land.
-    Noop,
+    TogglePopup,
+    CloseRequested(window::Id),
+    Rectangle(RectangleUpdate<u32>),
+    PrevMonth,
+    NextMonth,
     Tick,
     TimeConfigChanged(TimeAppletConfig),
 }
@@ -45,6 +55,10 @@ impl cosmic::Application for App {
                     .and_then(|c| TimeAppletConfig::get_entry(&c).ok())
                     .unwrap_or_default(),
                 now: jiff::Zoned::now(),
+                popup: None,
+                rectangle_tracker: None,
+                rectangle: Rectangle::default(),
+                date_selected: jiff::Zoned::now().date(),
                 config: ClockCenterConfig::default(),
             },
             Task::none(),
@@ -61,7 +75,57 @@ impl cosmic::Application for App {
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
         match message {
-            Message::Noop => Task::none(),
+            Message::TogglePopup => {
+                if let Some(p) = self.popup.take() {
+                    return destroy_popup(p);
+                }
+                return cosmic::surface::surface_task(cosmic::surface::action::app_popup(
+                    |_| Default::default(),
+                    |app: &mut Self| {
+                        app.date_selected = app.now.date();
+                        let new_id = window::Id::unique();
+                        app.popup = Some(new_id);
+                        let mut settings = app.core.applet.get_popup_settings(
+                            app.core.main_window_id().unwrap(),
+                            new_id,
+                            None,
+                            None,
+                            None,
+                        );
+                        let Rectangle { x, y, width, height } = app.rectangle;
+                        settings.positioner.anchor_rect = Rectangle::<i32> {
+                            x: x.max(1.) as i32,
+                            y: y.max(1.) as i32,
+                            width: width.max(1.) as i32,
+                            height: height.max(1.) as i32,
+                        };
+                        settings.positioner.size = None;
+                        settings
+                    },
+                    None,
+                ));
+            }
+            Message::CloseRequested(id) => {
+                if Some(id) == self.popup {
+                    self.popup = None;
+                }
+                Task::none()
+            }
+            Message::Rectangle(u) => {
+                match u {
+                    RectangleUpdate::Rectangle(r) => self.rectangle = r.1,
+                    RectangleUpdate::Init(t) => self.rectangle_tracker = Some(t),
+                }
+                Task::none()
+            }
+            Message::PrevMonth => {
+                self.date_selected = shift_month(self.date_selected, -1);
+                Task::none()
+            }
+            Message::NextMonth => {
+                self.date_selected = shift_month(self.date_selected, 1);
+                Task::none()
+            }
             Message::Tick => {
                 self.now = jiff::Zoned::now();
                 Task::none()
@@ -98,6 +162,7 @@ impl cosmic::Application for App {
         };
         Subscription::batch([
             tick,
+            rectangle_tracker_subscription(0).map(|e| Message::Rectangle(e.1)),
             self.core
                 .watch_config::<TimeAppletConfig>(config::TIME_CONFIG_ID)
                 .map(|u| {
@@ -113,12 +178,34 @@ impl cosmic::Application for App {
         let padding = self.core.applet.suggested_padding(true).0;
         let btn = button::custom(self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config)))
             .padding([0, padding])
-            .on_press(Message::Noop)
+            .on_press_down(Message::TogglePopup)
             .class(cosmic::theme::Button::AppletIcon);
-        autosize::autosize(btn, AUTOSIZE_MAIN_ID.clone()).into()
+        autosize::autosize(
+            if let Some(tracker) = self.rectangle_tracker.as_ref() {
+                Element::from(tracker.container(0, btn).ignore_bounds(true))
+            } else {
+                btn.into()
+            },
+            AUTOSIZE_MAIN_ID.clone(),
+        )
+        .into()
+    }
+
+    fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
+        let cal = crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week);
+        self.core.applet.popup_container(container(cal).padding(8)).into()
+    }
+
+    fn on_close_requested(&self, id: window::Id) -> Option<Message> {
+        Some(Message::CloseRequested(id))
     }
 
     fn style(&self) -> Option<cosmic::iced::theme::Style> {
         Some(cosmic::applet::style())
     }
+}
+
+/// Move to the same day in an adjacent month, clamped to the month's length.
+fn shift_month(d: jiff::civil::Date, months: i32) -> jiff::civil::Date {
+    d.checked_add(jiff::Span::new().months(months)).unwrap_or(d)
 }
