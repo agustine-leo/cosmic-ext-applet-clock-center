@@ -1,6 +1,6 @@
 [Desktop Entry]
 Name=Clock Center
-Comment=Date, time, notifications, calendar, media and timers
+Comment=Date, time, notifications, calendar and media
 Type=Application
 Exec=cosmic-ext-applet-clock-center
 Terminal=false

@@ -81,9 +81,17 @@ pub fn bottom_row<'a>(do_not_disturb: bool, clear: Element<'a, Message>) -> Elem
             .width(Length::Fill),
         clear
     ]
-    .spacing(8)
+    .spacing(cosmic::theme::spacing().space_xxs)
+    .padding(edge_padding(cosmic::theme::spacing().space_xs))
     .align_y(Alignment::Center)
     .into()
+}
+
+/// Right inset for rows outside a card (group header, DND/Clear row) so their
+/// right-most control lines up with the controls inside the cards, which sit
+/// `card_padding` in from the card edge.
+fn edge_padding(card_padding: u16) -> cosmic::iced::Padding {
+    cosmic::iced::Padding { right: f32::from(card_padding), ..cosmic::iced::Padding::ZERO }
 }
 
 fn one_line() -> Ellipsize {
@@ -120,6 +128,7 @@ fn group<'a>(app: String, ns: Vec<&'a Notification>, expansion: &Expansion<'_>) 
         close_button(Message::ClearNotificationGroup(app.clone())),
     ]
     .spacing(space.space_xxs)
+    .padding(edge_padding(space.space_xs))
     .align_y(Alignment::Center);
 
     let group_expanded = expansion.groups.contains(&app);
@@ -244,6 +253,17 @@ fn duration_ago(n: &Notification) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn edge_padding_insets_right_by_card_padding() {
+        assert_eq!(super::edge_padding(12), cosmic::iced::Padding { right: 12.0, ..cosmic::iced::Padding::ZERO });
+    }
+
+    #[test]
+    fn desktop_entry_has_no_timer_text() {
+        let entry = include_str!("../../data/com.system76.CosmicAppletNotifications.desktop");
+        assert!(!entry.to_lowercase().contains("timer"), "{entry}");
+    }
+
     use super::*;
     use std::time::SystemTime;
 

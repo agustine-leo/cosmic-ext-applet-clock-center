@@ -1,9 +1,9 @@
 [package]
 name = "cosmic-ext-applet-clock-center"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 license = "GPL-3.0-only"
-description = "One date/time button for the COSMIC panel: notifications, calendar, media and timers in one popup"
+description = "One date/time button for the COSMIC panel: notifications, calendar and media in one popup"
 
 [dependencies]
 cosmic-notifications-util = { git = "https://github.com/pop-os/cosmic-notifications" }
