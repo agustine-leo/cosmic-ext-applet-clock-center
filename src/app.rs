@@ -75,16 +75,29 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let period = if self.time_config.show_seconds
+        let seconds = self.time_config.show_seconds
             || self.time_config.format_strftime.contains("%S")
-            || self.time_config.format_strftime.contains("%T")
-        {
-            std::time::Duration::from_secs(1)
+            || self.time_config.format_strftime.contains("%T");
+        let tick = if seconds {
+            cosmic::iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::Tick)
         } else {
-            std::time::Duration::from_secs(15)
+            // Wake once per minute, aligned to the minute boundary.
+            Subscription::run(|| {
+                cosmic::iced::stream::channel(1, |mut output| async move {
+                    loop {
+                        let now = jiff::Zoned::now();
+                        let wait_ms = 60_000 - (now.second() as u64 * 1000 + now.millisecond() as u64);
+                        tokio::time::sleep(std::time::Duration::from_millis(wait_ms + 20)).await;
+                        if futures_util::SinkExt::send(&mut output, Message::Tick).await.is_err() {
+                            break;
+                        }
+                    }
+                    std::future::pending().await
+                })
+            })
         };
         Subscription::batch([
-            cosmic::iced::time::every(period).map(|_| Message::Tick),
+            tick,
             self.core
                 .watch_config::<TimeAppletConfig>(config::TIME_CONFIG_ID)
                 .map(|u| {
