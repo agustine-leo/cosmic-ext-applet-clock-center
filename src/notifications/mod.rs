@@ -7,7 +7,7 @@ mod view;
 pub use channel::ChannelStatus;
 pub use view::{view, Expansion};
 
-use cosmic_notifications_util::Notification;
+use cosmic_notifications_util::{ActionId, Notification};
 use std::collections::HashSet;
 
 /// Notifications received this session, oldest first, plus which are unread.
@@ -134,9 +134,47 @@ pub fn first_line_preview(body: &str) -> String {
     normalize_body(body).lines().next().unwrap_or_default().to_string()
 }
 
+/// Buttons shown under a card (same rules as the GNOME-style banners): the
+/// default action is never a button (clicking the card runs it), order is
+/// kept, and at most three are shown.
+pub fn action_buttons(actions: &[(ActionId, String)]) -> Vec<(ActionId, String)> {
+    actions
+        .iter()
+        .filter(|(id, _)| !matches!(id, ActionId::Default))
+        .take(3)
+        .cloned()
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn act(id: &str) -> (ActionId, String) {
+        (ActionId::Custom(id.into()), id.to_uppercase())
+    }
+
+    #[test]
+    fn action_buttons_drops_default_and_keeps_order() {
+        let a = vec![(ActionId::Default, "Open".into()), act("snooze"), act("stop")];
+        assert_eq!(action_buttons(&a).iter().map(|(_, l)| l.as_str()).collect::<Vec<_>>(), ["SNOOZE", "STOP"]);
+    }
+
+    #[test]
+    fn action_buttons_caps_at_three() {
+        let a: Vec<_> = ["a", "b", "c", "d", "e"].into_iter().map(act).collect();
+        assert_eq!(action_buttons(&a).len(), 3);
+    }
+
+    #[test]
+    fn action_buttons_default_only_is_empty() {
+        assert!(action_buttons(&[(ActionId::Default, "Open".into())]).is_empty());
+    }
+
+    #[test]
+    fn action_buttons_single_custom_is_shown() {
+        assert_eq!(action_buttons(&[act("open")]).len(), 1);
+    }
     use std::time::SystemTime;
 
     fn store() -> NotificationStore {

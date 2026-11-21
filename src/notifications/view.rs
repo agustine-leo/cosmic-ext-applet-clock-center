@@ -15,7 +15,7 @@ use cosmic::{
 };
 use cosmic_notifications_util::Notification;
 
-use super::{first_line_preview, normalize_body, ChannelStatus, NotificationStore};
+use super::{action_buttons, first_line_preview, normalize_body, ChannelStatus, NotificationStore};
 use crate::{app::Message, fl};
 
 /// Which cards and groups the user has expanded.
@@ -224,7 +224,26 @@ fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
     }
     controls = controls.push(close_button(Message::DismissNotification(n.id)));
 
-    container(row![body_area, controls].spacing(space.space_xxs).align_y(Alignment::Center).width(Length::Fill))
+    let top = row![body_area, controls].spacing(space.space_xxs).align_y(Alignment::Center).width(Length::Fill);
+    let mut content = column![top].spacing(space.space_xs).width(Length::Fill);
+    let buttons = action_buttons(&n.actions);
+    if !buttons.is_empty() {
+        // GNOME-style action row: equal-width buttons separated by thin dividers.
+        let mut row_ = row![].width(Length::Fill).align_y(Alignment::Center);
+        for (i, (action, label)) in buttons.into_iter().enumerate() {
+            if i > 0 {
+                row_ = row_.push(cosmic::widget::divider::vertical::default().height(Length::Fixed(20.0)));
+            }
+            row_ = row_.push(
+                button::custom(container(text::body(label)).center_x(Length::Fill))
+                    .width(Length::Fill)
+                    .class(cosmic::theme::Button::Text)
+                    .on_press(Message::InvokeAction(n.id, action.to_string())),
+            );
+        }
+        content = content.push(cosmic::widget::divider::horizontal::default()).push(row_);
+    }
+    container(content)
         .padding(space.space_xs)
         .class(cosmic::theme::Container::Card)
         .width(Length::Fill)

@@ -87,6 +87,8 @@ pub enum Message {
     NotificationClosed(u32),
     DismissNotification(u32),
     ActivateNotification(u32),
+    /// A specific action button on a card (action id as sent by the app).
+    InvokeAction(u32, String),
     ClearNotifications,
     ClearNotificationGroup(String),
     ToggleNotificationExpanded(u32),
@@ -99,6 +101,28 @@ pub enum Message {
 }
 
 impl App {
+    /// Ask the daemon to run `action` for notification `id`, then close the
+    /// popup (GNOME and the stock applet close it after activating).
+    fn send_activation(&mut self, id: u32, action: String) -> Task<Message> {
+        let Some(tx) = self.notifications_tx.clone() else {
+            tracing::warn!("Activation for {id} ignored: notifications channel not ready");
+            return Task::none();
+        };
+        let activate = cosmic::iced::Task::future(async move {
+            if let Err(err) = tx.send(channel::Input::Activate(id, action)).await {
+                tracing::error!("Failed to send activation for {id}: {err}");
+            }
+        })
+        .discard();
+        match self.popup.take() {
+            Some(p) => {
+                self.popup_closed();
+                Task::batch([activate, destroy_popup(p)])
+            }
+            None => activate,
+        }
+    }
+
     fn popup_opened(&mut self) {
         if let Some(v) = self.popup_dnd.on_open(self.do_not_disturb) {
             if let Some(m) = notifications::dnd::marker_path() {
@@ -332,31 +356,13 @@ impl cosmic::Application for App {
                 } else {
                     n.actions.first().map(|a| a.0.to_string())
                 };
-                match (action, self.notifications_tx.clone()) {
-                    (Some(action), Some(tx)) => {
-                        let activate = cosmic::iced::Task::future(async move {
-                            if let Err(err) = tx.send(channel::Input::Activate(id, action)).await {
-                                tracing::error!("Failed to send activation for {id}: {err}");
-                            }
-                        })
-                        .discard();
-                        // Close the popup after activating, like GNOME and the stock applet.
-                        match self.popup.take() {
-                            Some(p) => {
-                                self.popup_closed();
-                                Task::batch([activate, destroy_popup(p)])
-                            }
-                            None => activate,
-                        }
-                    }
+                match action {
+                    Some(action) => self.send_activation(id, action),
                     // Nothing to activate: clicking just dismisses it.
-                    (None, _) => cosmic::task::message(Message::DismissNotification(id)),
-                    (Some(_), None) => {
-                        tracing::warn!("Activation for {id} ignored: notifications channel not ready");
-                        Task::none()
-                    }
+                    None => cosmic::task::message(Message::DismissNotification(id)),
                 }
             }
+            Message::InvokeAction(id, action) => self.send_activation(id, action),
         }
     }
 
