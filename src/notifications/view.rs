@@ -32,6 +32,7 @@ pub fn view<'a>(
     expansion: Expansion<'a>,
     do_not_disturb: bool,
 ) -> Element<'a, Message> {
+    let space = cosmic::theme::spacing();
     let list: Element<'a, Message> = if let Some(ChannelStatus::Unavailable(reason)) = status {
         container(text::body(fl!("notifications-unavailable", reason = reason.as_str())))
             .padding([8, 0])
@@ -54,16 +55,18 @@ pub fn view<'a>(
             .groups_newest_first()
             .into_iter()
             .map(|(app, ns)| group(app, ns, &expansion));
-        scrollable(Column::with_children(groups).spacing(12).width(Length::Fill))
+        // `spacing` puts the scrollbar beside the cards instead of over them.
+        scrollable(Column::with_children(groups).spacing(space.space_xs).width(Length::Fill))
+            .spacing(space.space_xxs)
             .height(Length::Fill)
             .into()
     };
 
-    let clear = button::text(fl!("clear-all")).on_press_maybe((!store.is_empty()).then_some(Message::ClearNotifications));
+    let clear = button::standard(fl!("clear-all")).on_press_maybe((!store.is_empty()).then_some(Message::ClearNotifications));
     let bottom = bottom_row(do_not_disturb, clear.into());
 
     column![container(list).width(Length::Fill).height(Length::Fill), bottom]
-        .spacing(8)
+        .spacing(space.space_xs)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -110,18 +113,18 @@ fn close_button(msg: Message) -> Element<'static, Message> {
 /// One app's notifications: a slim header (app name + clear-group) above
 /// its card stack; only the newest card shows until "+N more" is pressed.
 fn group<'a>(app: String, ns: Vec<&'a Notification>, expansion: &Expansion<'_>) -> Element<'a, Message> {
+    let space = cosmic::theme::spacing();
     let app_label = if app.is_empty() { fl!("unknown-app") } else { app.clone() };
     let header = row![
         text::caption_heading(app_label).ellipsize(one_line()).width(Length::Fill),
         close_button(Message::ClearNotificationGroup(app.clone())),
     ]
-    .spacing(8)
-    .padding([0, 4])
+    .spacing(space.space_xxs)
     .align_y(Alignment::Center);
 
     let group_expanded = expansion.groups.contains(&app);
     let shown = if group_expanded { ns.len() } else { 1 };
-    let mut col = Column::new().spacing(8).width(Length::Fill).push(header);
+    let mut col = Column::new().spacing(space.space_xxs).width(Length::Fill).push(header);
     for n in &ns[..shown] {
         col = col.push(card(n, expansion.cards.contains(&n.id)));
     }
@@ -129,12 +132,15 @@ fn group<'a>(app: String, ns: Vec<&'a Notification>, expansion: &Expansion<'_>) 
         let label = if group_expanded {
             fl!("show-less")
         } else {
-            {
             let more = ns.len() - 1;
             fl!("show-more", more = more)
-        }
         };
-        col = col.push(button::text(label).on_press(Message::ToggleNotificationGroup(app)));
+        // No horizontal padding: the label's left edge lines up with the cards.
+        col = col.push(
+            button::text(label)
+                .padding([space.space_xxxs, 0])
+                .on_press(Message::ToggleNotificationGroup(app)),
+        );
     }
     col.into()
 }
@@ -170,6 +176,7 @@ fn card_text(n: &Notification, expanded: bool) -> CardText {
 /// its siblings, so pressing them never activates the notification. Text is not inside
 /// a `Button::Transparent` (whose text colour is fully transparent in libcosmic).
 fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
+    let space = cosmic::theme::spacing();
     let t = card_text(n, expanded);
 
     let summary = if expanded {
@@ -193,7 +200,7 @@ fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
         .size(32);
 
     let body_area = cosmic::widget::mouse_area(
-        row![app_icon, content].spacing(12).align_y(Alignment::Center).width(Length::Fill),
+        row![app_icon, content].spacing(space.space_xs).align_y(Alignment::Center).width(Length::Fill),
     )
     .on_press(Message::ActivateNotification(n.id))
     .interaction(cosmic::iced::mouse::Interaction::Pointer);
@@ -205,8 +212,8 @@ fn card(n: &Notification, expanded: bool) -> Element<'_, Message> {
     }
     controls = controls.push(close_button(Message::DismissNotification(n.id)));
 
-    container(row![body_area, controls].spacing(8).align_y(Alignment::Center).width(Length::Fill))
-        .padding(12)
+    container(row![body_area, controls].spacing(space.space_xxs).align_y(Alignment::Center).width(Length::Fill))
+        .padding(space.space_xs)
         .class(cosmic::theme::Container::Card)
         .width(Length::Fill)
         .into()

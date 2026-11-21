@@ -23,10 +23,17 @@ use crate::notifications::{self, channel, ChannelStatus, NotificationStore};
 const LEFT_WIDTH: f32 = 416.0;
 const RIGHT_WIDTH: f32 = 288.0;
 const MIN_HEIGHT: f32 = 520.0;
-const POPUP_PADDING: f32 = 8.0;
+/// Popup padding (theme `space_s`) and gap between columns (theme `space_xs`).
+/// Fixed values, so the popup width matches the content exactly.
+const POPUP_PADDING: f32 = 16.0;
 const COLUMN_SPACING: f32 = 12.0;
-/// Two columns, the divider and the min-height spacer, with spacing and padding.
-const POPUP_WIDTH: f32 = LEFT_WIDTH + RIGHT_WIDTH + 1.0 + 3.0 * COLUMN_SPACING + 2.0 * POPUP_PADDING;
+const POPUP_WIDTH: f32 = popup_width(LEFT_WIDTH, RIGHT_WIDTH, POPUP_PADDING, COLUMN_SPACING);
+
+/// Left column + 1px divider + right column, with a gap on each side of the
+/// divider and padding around everything.
+pub const fn popup_width(left: f32, right: f32, padding: f32, gap: f32) -> f32 {
+    left + 1.0 + right + 2.0 * gap + 2.0 * padding
+}
 const POPUP_MAX_HEIGHT: f32 = 1000.0;
 
 /// libcosmic caps applet popups at 360px wide; this popup needs more.
@@ -396,7 +403,8 @@ impl cosmic::Application for App {
         use cosmic::widget::divider;
 
         // Left: media (if any), notifications filling the column, DND/Clear pinned at the bottom.
-        let mut left = column![].spacing(12).width(Length::Fixed(LEFT_WIDTH)).height(Length::Fill);
+        let space = cosmic::theme::spacing();
+        let mut left = column![].spacing(space.space_xs).width(Length::Fixed(LEFT_WIDTH)).height(Length::Fill);
         if media::pick_player(&self.players).is_some() {
             left = left.push(media::view(&self.players, self.media_art.as_ref().map(|(_, h)| h)));
         }
@@ -407,21 +415,16 @@ impl cosmic::Application for App {
             self.do_not_disturb,
         ));
 
-        // Right: calendar. Its height (or MIN_HEIGHT) sets the popup height.
-        let right = column![
-            crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week),
-        ]
-        .width(Length::Fixed(RIGHT_WIDTH));
+        // Right: calendar. Its height (or MIN_HEIGHT, via the zero-width spacer) sets the popup height.
+        let right = row![
+            column![crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week)]
+                .width(Length::Fixed(RIGHT_WIDTH)),
+            space::vertical().width(Length::Fixed(0.0)).height(Length::Fixed(MIN_HEIGHT)),
+        ];
 
         // The left column and the divider are Fill-height, so the row takes the
         // height of the right column, never of the notification list.
-        let content = row![
-            left,
-            divider::vertical::default(),
-            right,
-            space::vertical().width(Length::Fixed(0.0)).height(Length::Fixed(MIN_HEIGHT)),
-        ]
-        .spacing(COLUMN_SPACING);
+        let content = row![left, divider::vertical::default(), right].spacing(COLUMN_SPACING);
         self.core
             .applet
             .popup_container(container(content).padding(POPUP_PADDING))
@@ -462,4 +465,14 @@ fn unread_dot() -> Element<'static, Message> {
             ..Default::default()
         }))
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn popup_width_matches_layout() {
+        assert_eq!(popup_width(416.0, 288.0, 16.0, 12.0), 416.0 + 1.0 + 288.0 + 2.0 * 12.0 + 2.0 * 16.0);
+    }
 }

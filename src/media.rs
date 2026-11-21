@@ -299,20 +299,27 @@ pub fn view<'a>(players: &'a [PlayerState], art: Option<&'a icon::Handle>) -> El
     } else {
         "media-playback-start-symbolic"
     };
-    row![
-        art,
-        column![
-            text::body(p.title.as_str()).ellipsize(one_line).width(Length::Fill),
-            text::caption(subtitle).ellipsize(one_line).width(Length::Fill),
-        ]
+    let space = cosmic::theme::spacing();
+    // Same card style and padding as the notification cards.
+    container(
+        row![
+            art,
+            column![
+                text::body(p.title.as_str()).ellipsize(one_line).width(Length::Fill),
+                text::caption(subtitle).ellipsize(one_line).width(Length::Fill),
+            ]
             .spacing(2)
             .width(Length::Fill),
-        ctl("media-skip-backward-symbolic", MediaCommand::Previous),
-        ctl(play_icon, MediaCommand::PlayPause),
-        ctl("media-skip-forward-symbolic", MediaCommand::Next),
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center)
+            ctl("media-skip-backward-symbolic", MediaCommand::Previous),
+            ctl(play_icon, MediaCommand::PlayPause),
+            ctl("media-skip-forward-symbolic", MediaCommand::Next),
+        ]
+        .spacing(space.space_xxs)
+        .align_y(Alignment::Center),
+    )
+    .padding(space.space_xs)
+    .class(cosmic::theme::Container::Card)
+    .width(Length::Fill)
     .into()
 }
 
