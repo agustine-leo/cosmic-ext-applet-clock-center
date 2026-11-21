@@ -58,7 +58,7 @@ fn day_button(day: i8, is_selected: bool, is_today: bool) -> Button<'static, Mes
     button::custom(text::body(format!("{day}")).apply(container).center(Length::Fill))
         .class(style)
         .height(Length::Fixed(40.0))
-        .width(Length::Fixed(40.0))
+        .width(Length::Fill)
 }
 
 pub fn view<'a>(selected: Date, today: Date, first_day_of_week: u8) -> Element<'a, Message> {
@@ -77,7 +77,7 @@ pub fn view<'a>(selected: Date, today: Date, first_day_of_week: u8) -> Element<'
         .push(button::icon(cosmic::widget::icon::from_name("go-next-symbolic")).on_press(Message::NextMonth))
         .align_y(cosmic::iced::Alignment::Center);
 
-    let mut weekdays = row::with_capacity(7);
+    let mut weekdays = row::with_capacity(7).width(Length::Fill);
     let mut wd = start;
     for _ in 0..7 {
         let name = Date::new(2024, 1, 1)
@@ -85,26 +85,27 @@ pub fn view<'a>(selected: Date, today: Date, first_day_of_week: u8) -> Element<'
             .and_then(|d| d.nth_weekday(1, wd).ok())
             .map(|d| d.strftime("%a").to_string())
             .unwrap_or_default();
-        weekdays = weekdays.push(text::caption(name).apply(container).center_x(Length::Fixed(40.0)));
+        weekdays = weekdays.push(text::caption(name).apply(container).center_x(Length::Fill));
         wd = wd.next();
     }
 
-    let mut grid = column::with_capacity(6).push(weekdays);
+    let mut grid = column::with_capacity(6).width(Length::Fill).push(weekdays);
     for week in month_grid(selected.year(), selected.month(), first_day_of_week) {
-        let mut r = row::with_capacity(7);
+        let mut r = row::with_capacity(7).width(Length::Fill);
         for cell in week {
             r = r.push(match cell {
                 Some(d) => {
                     let is_today = Date::new(selected.year(), selected.month(), d).is_ok_and(|x| x == today);
                     Element::from(day_button(d, d == selected.day(), is_today))
                 }
-                None => Element::from(cosmic::widget::Space::new().width(Length::Fixed(40.0)).height(Length::Fixed(40.0))),
+                None => Element::from(cosmic::widget::Space::new().width(Length::Fill).height(Length::Fixed(40.0))),
             });
         }
         grid = grid.push(r);
     }
 
     column::with_capacity(3)
+        .width(Length::Fill)
         .push(header)
         .push(nav)
         .push(grid)
@@ -128,6 +129,11 @@ mod tests {
     fn nov_2026_monday_start() {
         let g = month_grid(2026, 11, 0);
         assert_eq!(g[0], [None, None, None, None, None, None, Some(1)]);
+    }
+    #[test]
+    fn nov_2026_saturday_start() {
+        let g = month_grid(2026, 11, 5);
+        assert_eq!(g[0], [None, Some(1), Some(2), Some(3), Some(4), Some(5), Some(6)]);
     }
     #[test]
     fn feb_2028_leap() {

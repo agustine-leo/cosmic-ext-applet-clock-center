@@ -193,7 +193,7 @@ impl cosmic::Application for App {
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
         let cal = crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week);
-        self.core.applet.popup_container(container(cal).padding(8)).into()
+        self.core.applet.popup_container(container(cal).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
     }
 
     fn on_close_requested(&self, id: window::Id) -> Option<Message> {
