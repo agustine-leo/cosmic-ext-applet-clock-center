@@ -15,7 +15,7 @@ use std::{collections::HashSet, sync::LazyLock};
 
 use cosmic::cosmic_config::CosmicConfigEntry;
 
-use crate::config::{self, ClockCenterConfig, TimeAppletConfig};
+use crate::config::{self, TimeAppletConfig};
 use crate::media;
 use crate::notifications::{self, channel, ChannelStatus, NotificationStore};
 
@@ -59,10 +59,6 @@ pub struct App {
     players: Vec<media::PlayerState>,
     /// Loaded album art for the shown player, keyed by its `file://` URL.
     media_art: Option<(String, cosmic::widget::icon::Handle)>,
-    config: ClockCenterConfig,
-    timer: crate::timer::TimerState,
-    /// Latest `SystemTime` seen by a timer tick (drives the countdown view).
-    timer_now: std::time::SystemTime,
     /// Animation frame of the playing indicator.
     indicator_frame: u32,
 }
@@ -76,7 +72,6 @@ pub enum Message {
     NextMonth,
     Tick,
     TimeConfigChanged(TimeAppletConfig),
-    OwnConfigChanged(ClockCenterConfig),
     Notification(Notification),
     ChannelStatus(ChannelStatus),
     NotificationsInput(mpsc::Sender<channel::Input>),
@@ -91,9 +86,6 @@ pub enum Message {
     DndChanged(bool),
     Players(Vec<media::PlayerState>),
     MediaCommand(String, media::MediaCommand),
-    StartTimer(u32),
-    CancelTimer,
-    TimerTick,
     IndicatorFrame,
 }
 
@@ -124,22 +116,6 @@ impl cosmic::Application for App {
                 expanded_groups: HashSet::new(),
                 players: Vec::new(),
                 media_art: None,
-                config: match cosmic::cosmic_config::Config::new(config::OWN_CONFIG_ID, ClockCenterConfig::VERSION) {
-                    Ok(c) => match ClockCenterConfig::get_entry(&c) {
-                        Ok(v) => v,
-                        Err((errs, v)) => {
-                            tracing::warn!(?errs, "Own config partly unreadable, using defaults for those fields");
-                            v
-                        }
-                    },
-                    Err(err) => {
-                        tracing::warn!(?err, "Could not open own config, using defaults");
-                        ClockCenterConfig::default()
-                    }
-                }
-                .sanitized(),
-                timer: Default::default(),
-                timer_now: std::time::SystemTime::now(),
                 indicator_frame: 0,
             },
             Task::none(),
@@ -209,43 +185,12 @@ impl cosmic::Application for App {
                 self.date_selected = shift_month(self.date_selected, 1);
                 Task::none()
             }
-            Message::StartTimer(m) => {
-                self.timer_now = std::time::SystemTime::now();
-                self.timer.start(m, self.timer_now);
-                Task::none()
-            }
-            Message::CancelTimer => {
-                self.timer.cancel();
-                Task::none()
-            }
-            Message::TimerTick => {
-                self.timer_now = std::time::SystemTime::now();
-                let Some(m) = self.timer.tick(self.timer_now) else {
-                    return Task::none();
-                };
-                let notify = Task::perform(crate::timer::send_done_notification(m), |r| {
-                    if let Err(err) = r {
-                        tracing::error!(?err, "Failed to send timer notification");
-                    }
-                    cosmic::Action::None
-                });
-                // cosmic-notifications shows no banner at all under DND, whatever the urgency.
-                if crate::timer::should_play_sound(self.do_not_disturb) {
-                    Task::batch([notify, cosmic::iced::Task::future(crate::timer::play_done_sound()).discard()])
-                } else {
-                    notify
-                }
-            }
             Message::IndicatorFrame => {
                 self.indicator_frame = self.indicator_frame.wrapping_add(1);
                 Task::none()
             }
             Message::Tick => {
                 self.now = jiff::Zoned::now();
-                Task::none()
-            }
-            Message::OwnConfigChanged(c) => {
-                self.config = c.sanitized();
                 Task::none()
             }
             Message::TimeConfigChanged(c) => {
@@ -388,11 +333,6 @@ impl cosmic::Application for App {
                 })
             })
         };
-        let timer_tick = if self.timer.current.is_some() {
-            cosmic::iced::time::every(std::time::Duration::from_secs(1)).map(|_| Message::TimerTick)
-        } else {
-            Subscription::none()
-        };
         // Only animate while something is playing: no ticking otherwise.
         let indicator_tick = if media::any_playing(&self.players) {
             cosmic::iced::time::every(std::time::Duration::from_millis(166)).map(|_| Message::IndicatorFrame)
@@ -401,7 +341,6 @@ impl cosmic::Application for App {
         };
         Subscription::batch([
             tick,
-            timer_tick,
             indicator_tick,
             rectangle_tracker_subscription(0).map(|e| Message::Rectangle(e.1)),
             self.core
@@ -411,14 +350,6 @@ impl cosmic::Application for App {
                         tracing::error!(?err, "Error watching time config");
                     }
                     Message::TimeConfigChanged(u.config)
-                }),
-            self.core
-                .watch_config::<ClockCenterConfig>(config::OWN_CONFIG_ID)
-                .map(|u| {
-                    for err in u.errors {
-                        tracing::warn!(?err, "Error watching own config");
-                    }
-                    Message::OwnConfigChanged(u.config)
                 }),
             self.core
                 .watch_config::<cosmic_notifications_config::NotificationsConfig>(cosmic_notifications_config::ID)
@@ -476,13 +407,10 @@ impl cosmic::Application for App {
             self.do_not_disturb,
         ));
 
-        // Right: calendar, divider, timers. Its height (or MIN_HEIGHT) sets the popup height.
+        // Right: calendar. Its height (or MIN_HEIGHT) sets the popup height.
         let right = column![
             crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week),
-            divider::horizontal::default(),
-            crate::timer::view(&self.config.timer_presets, &self.timer, self.timer_now),
         ]
-        .spacing(12)
         .width(Length::Fixed(RIGHT_WIDTH));
 
         // The left column and the divider are Fill-height, so the row takes the

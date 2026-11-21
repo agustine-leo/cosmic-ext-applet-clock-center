@@ -1,6 +1,6 @@
 # cosmic-ext-applet-clock-center
 
-One date/time button for the COSMIC panel: notifications, calendar, media and timers in one popup,
+One date/time button for the COSMIC panel: notifications, calendar and media in one popup,
 laid out like GNOME's date menu.
 
 Screenshot coming soon.
@@ -16,11 +16,7 @@ Screenshot coming soon.
     grouped per app as compact cards (expand long bodies, show older cards per app, dismiss one
     or a whole group, click to activate), with the **Do Not Disturb** toggle and **Clear** button
     pinned at the bottom.
-  - Right: month calendar (respects your first day of week) and quick timers.
-- **Quick timers**: one-click presets (default 1, 5, 10 and 25 minutes, configurable in
-  `io.github.agustine_leo.CosmicExtAppletClockCenter`). A finished timer is sent as a
-  **critical** notification. COSMIC shows no banners under Do Not Disturb, so while it is on the
-  timer also plays the "complete" sound (`canberra-gtk-play`).
+  - Right: month calendar (respects your first day of week).
 - Do Not Disturb is the same setting COSMIC uses (`com.system76.CosmicNotifications`).
 - If the notifications socket is missing, the popup shows a warning instead of an empty list.
 
