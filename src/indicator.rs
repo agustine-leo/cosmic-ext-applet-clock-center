@@ -17,10 +17,10 @@ pub fn bar_heights(frame: u32) -> [u8; 4] {
     PHASE.map(|p| WAVE[((frame + p) % 8) as usize])
 }
 
-/// Four accent-coloured bars, bottom-aligned in a 10px box.
+/// Four 4px accent-coloured bars, bottom-aligned in a 10px box, with a gap before the label.
 pub fn view<'a, M: 'a>(frame: u32) -> Element<'a, M> {
     let bars = bar_heights(frame).map(|h| {
-        container(space::horizontal().width(Length::Fixed(3.0)).height(Length::Fixed(h as f32)))
+        container(space::horizontal().width(Length::Fixed(4.0)).height(Length::Fixed(h as f32)))
             .class(cosmic::theme::Container::custom(|theme| container::Style {
                 background: Some(Color::from(theme.cosmic().accent_color()).into()),
                 border: Border { radius: 1.0.into(), ..Default::default() },
@@ -28,8 +28,9 @@ pub fn view<'a, M: 'a>(frame: u32) -> Element<'a, M> {
             }))
             .into()
     });
-    container(row(bars).spacing(2).align_y(Alignment::End))
+    container(row(bars).spacing(3).align_y(Alignment::End))
         .height(Length::Fixed(10.0))
+        .padding([0, 4, 0, 0])
         .align_y(Alignment::End)
         .into()
 }
