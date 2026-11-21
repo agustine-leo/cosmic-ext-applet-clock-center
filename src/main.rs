@@ -5,6 +5,7 @@ mod calendar;
 mod clock;
 mod config;
 mod localize;
+mod media;
 mod notifications;
 
 fn main() -> cosmic::iced::Result {

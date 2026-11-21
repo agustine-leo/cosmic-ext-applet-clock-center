@@ -16,6 +16,7 @@ use std::{collections::HashSet, sync::LazyLock};
 use cosmic::cosmic_config::CosmicConfigEntry;
 
 use crate::config::{self, ClockCenterConfig, TimeAppletConfig};
+use crate::media;
 use crate::notifications::{self, channel, ChannelStatus, NotificationStore};
 
 static AUTOSIZE_MAIN_ID: LazyLock<Id> = LazyLock::new(|| Id::new("autosize-main"));
@@ -36,6 +37,9 @@ pub struct App {
     /// App names whose group shows all cards, not only the newest.
     expanded_groups: HashSet<String>,
     do_not_disturb: bool,
+    players: Vec<media::PlayerState>,
+    /// Loaded album art for the shown player, keyed by its `file://` URL.
+    media_art: Option<(String, cosmic::widget::icon::Handle)>,
     #[allow(dead_code)]
     config: ClockCenterConfig,
 }
@@ -61,6 +65,8 @@ pub enum Message {
     ToggleNotificationGroup(String),
     SetDnd(bool),
     DndChanged(bool),
+    Players(Vec<media::PlayerState>),
+    MediaCommand(String, media::MediaCommand),
 }
 
 impl cosmic::Application for App {
@@ -88,6 +94,8 @@ impl cosmic::Application for App {
                 do_not_disturb: notifications::dnd::read(),
                 expanded_cards: HashSet::new(),
                 expanded_groups: HashSet::new(),
+                players: Vec::new(),
+                media_art: None,
                 config: ClockCenterConfig::default(),
             },
             Task::none(),
@@ -225,6 +233,20 @@ impl cosmic::Application for App {
                 self.do_not_disturb = b;
                 Task::none()
             }
+            Message::Players(players) => {
+                self.players = players;
+                let url = media::pick_player(&self.players).and_then(|p| p.art_url.clone());
+                if self.media_art.as_ref().map(|(u, _)| u) != url.as_ref() {
+                    self.media_art = url.and_then(|u| {
+                        let path = media::art_path(&u)?;
+                        Some((u, cosmic::widget::icon::from_path(path)))
+                    });
+                }
+                Task::none()
+            }
+            Message::MediaCommand(bus, cmd) => {
+                cosmic::iced::Task::future(media::send_command(bus, cmd)).discard()
+            }
             Message::ActivateNotification(id) => {
                 let Some(n) = self.notifications.get(id) else {
                     return Task::none();
@@ -295,6 +317,7 @@ impl cosmic::Application for App {
                 }),
             notifications::channel::subscription(),
             notifications::channel::closed_subscription(),
+            media::subscription(),
         ])
     }
 
@@ -329,7 +352,11 @@ impl cosmic::Application for App {
             notifications::Expansion { cards: &self.expanded_cards, groups: &self.expanded_groups },
             self.do_not_disturb,
         );
-        let content = column![notifs, cal].spacing(8);
+        let mut content = column![].spacing(8);
+        if media::pick_player(&self.players).is_some() {
+            content = content.push(media::view(&self.players, self.media_art.as_ref().map(|(_, h)| h)));
+        }
+        let content = content.push(notifs).push(cal);
         self.core.applet.popup_container(container(content).padding(8).width(cosmic::iced::Length::Fixed(324.0))).into()
     }
 
