@@ -42,8 +42,8 @@ pub struct App {
     media_art: Option<(String, cosmic::widget::icon::Handle)>,
     config: ClockCenterConfig,
     timer: crate::timer::TimerState,
-    /// Latest `Instant` seen by a timer tick (drives the countdown view).
-    timer_now: std::time::Instant,
+    /// Latest `SystemTime` seen by a timer tick (drives the countdown view).
+    timer_now: std::time::SystemTime,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +55,7 @@ pub enum Message {
     NextMonth,
     Tick,
     TimeConfigChanged(TimeAppletConfig),
+    OwnConfigChanged(ClockCenterConfig),
     Notification(Notification),
     ChannelStatus(ChannelStatus),
     NotificationsInput(mpsc::Sender<channel::Input>),
@@ -101,9 +102,22 @@ impl cosmic::Application for App {
                 expanded_groups: HashSet::new(),
                 players: Vec::new(),
                 media_art: None,
-                config: ClockCenterConfig::default(),
+                config: match cosmic::cosmic_config::Config::new(config::OWN_CONFIG_ID, ClockCenterConfig::VERSION) {
+                    Ok(c) => match ClockCenterConfig::get_entry(&c) {
+                        Ok(v) => v,
+                        Err((errs, v)) => {
+                            tracing::warn!(?errs, "Own config partly unreadable, using defaults for those fields");
+                            v
+                        }
+                    },
+                    Err(err) => {
+                        tracing::warn!(?err, "Could not open own config, using defaults");
+                        ClockCenterConfig::default()
+                    }
+                }
+                .sanitized(),
                 timer: Default::default(),
-                timer_now: std::time::Instant::now(),
+                timer_now: std::time::SystemTime::now(),
             },
             Task::none(),
         )
@@ -172,7 +186,7 @@ impl cosmic::Application for App {
                 Task::none()
             }
             Message::StartTimer(m) => {
-                self.timer_now = std::time::Instant::now();
+                self.timer_now = std::time::SystemTime::now();
                 self.timer.start(m, self.timer_now);
                 Task::none()
             }
@@ -181,7 +195,7 @@ impl cosmic::Application for App {
                 Task::none()
             }
             Message::TimerTick => {
-                self.timer_now = std::time::Instant::now();
+                self.timer_now = std::time::SystemTime::now();
                 match self.timer.tick(self.timer_now) {
                     Some(m) => Task::perform(crate::timer::send_done_notification(m), |r| {
                         if let Err(err) = r {
@@ -194,6 +208,10 @@ impl cosmic::Application for App {
             }
             Message::Tick => {
                 self.now = jiff::Zoned::now();
+                Task::none()
+            }
+            Message::OwnConfigChanged(c) => {
+                self.config = c.sanitized();
                 Task::none()
             }
             Message::TimeConfigChanged(c) => {
@@ -340,6 +358,14 @@ impl cosmic::Application for App {
                         tracing::error!(?err, "Error watching time config");
                     }
                     Message::TimeConfigChanged(u.config)
+                }),
+            self.core
+                .watch_config::<ClockCenterConfig>(config::OWN_CONFIG_ID)
+                .map(|u| {
+                    for err in u.errors {
+                        tracing::warn!(?err, "Error watching own config");
+                    }
+                    Message::OwnConfigChanged(u.config)
                 }),
             self.core
                 .watch_config::<cosmic_notifications_config::NotificationsConfig>(cosmic_notifications_config::ID)

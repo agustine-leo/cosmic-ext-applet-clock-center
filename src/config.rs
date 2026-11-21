@@ -48,3 +48,31 @@ impl Default for ClockCenterConfig {
         }
     }
 }
+
+impl ClockCenterConfig {
+    /// Drop zero and duplicate presets; fall back to the defaults if nothing is left.
+    pub fn sanitized(mut self) -> Self {
+        let mut seen = std::collections::HashSet::new();
+        self.timer_presets.retain(|&m| m > 0 && seen.insert(m));
+        if self.timer_presets.is_empty() {
+            self.timer_presets = Self::default().timer_presets;
+        }
+        self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitized_drops_zero_and_duplicates() {
+        let c = ClockCenterConfig { timer_presets: vec![0, 5, 5, 10] }.sanitized();
+        assert_eq!(c.timer_presets, vec![5, 10]);
+    }
+    #[test]
+    fn sanitized_empty_uses_default() {
+        let c = ClockCenterConfig { timer_presets: vec![0] }.sanitized();
+        assert_eq!(c.timer_presets, vec![1, 5, 10, 25]);
+    }
+}

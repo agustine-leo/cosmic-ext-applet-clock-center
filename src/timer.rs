@@ -2,7 +2,7 @@
 
 use std::{
     collections::HashMap,
-    time::{Duration, Instant},
+    time::{Duration, SystemTime},
 };
 
 use cosmic::{
@@ -16,21 +16,22 @@ use crate::app::Message;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timer {
     minutes: u32,
-    ends_at: Instant,
+    ends_at: SystemTime,
 }
 
 impl Timer {
-    pub fn start(minutes: u32, now: Instant) -> Self {
+    pub fn start(minutes: u32, now: SystemTime) -> Self {
         Self { minutes, ends_at: now + Duration::from_secs(minutes as u64 * 60) }
     }
-    pub fn remaining(&self, now: Instant) -> Duration {
-        self.ends_at.saturating_duration_since(now)
+    pub fn remaining(&self, now: SystemTime) -> Duration {
+        self.ends_at.duration_since(now).unwrap_or_default()
     }
-    pub fn is_done(&self, now: Instant) -> bool {
+    pub fn is_done(&self, now: SystemTime) -> bool {
         now >= self.ends_at
     }
 }
 
+/// Deadlines use wall-clock time so suspended time counts (monotonic clocks pause in suspend).
 /// At most one running timer.
 #[derive(Debug, Default)]
 pub struct TimerState {
@@ -38,14 +39,14 @@ pub struct TimerState {
 }
 
 impl TimerState {
-    pub fn start(&mut self, minutes: u32, now: Instant) {
+    pub fn start(&mut self, minutes: u32, now: SystemTime) {
         self.current = Some(Timer::start(minutes, now));
     }
     pub fn cancel(&mut self) {
         self.current = None;
     }
     /// Returns `Some(minutes)` exactly once when the timer finishes, then clears it.
-    pub fn tick(&mut self, now: Instant) -> Option<u32> {
+    pub fn tick(&mut self, now: SystemTime) -> Option<u32> {
         let t = self.current?;
         if t.is_done(now) {
             self.current = None;
@@ -86,7 +87,7 @@ pub async fn send_done_notification(minutes: u32) -> zbus::Result<()> {
     Ok(())
 }
 
-pub fn view<'a>(presets: &'a [u32], state: &'a TimerState, now: Instant) -> Element<'a, Message> {
+pub fn view<'a>(presets: &'a [u32], state: &'a TimerState, now: SystemTime) -> Element<'a, Message> {
     let mut col = column![].spacing(8).push(text::heading("⏰ Start a timer"));
     match &state.current {
         Some(t) => {
@@ -115,13 +116,13 @@ mod tests {
 
     #[test]
     fn remaining_counts_down() {
-        let t0 = Instant::now();
+        let t0 = SystemTime::now();
         let t = Timer::start(5, t0);
         assert_eq!(t.remaining(t0 + Duration::from_secs(28)), Duration::from_secs(272));
     }
     #[test]
     fn done_at_end() {
-        let t0 = Instant::now();
+        let t0 = SystemTime::now();
         assert!(Timer::start(1, t0).is_done(t0 + Duration::from_secs(60)));
     }
     #[test]
@@ -130,7 +131,7 @@ mod tests {
     }
     #[test]
     fn starting_new_timer_replaces_old() {
-        let t0 = Instant::now();
+        let t0 = SystemTime::now();
         let mut s = TimerState::default();
         s.start(1, t0);
         s.start(5, t0);
@@ -139,8 +140,15 @@ mod tests {
         assert_eq!(s.tick(t0 + Duration::from_secs(300)), Some(5));
     }
     #[test]
+    fn fires_immediately_after_clock_jump() {
+        let t0 = SystemTime::now();
+        let mut s = TimerState::default();
+        s.start(5, t0);
+        assert_eq!(s.tick(t0 + Duration::from_secs(6 * 60)), Some(5));
+    }
+    #[test]
     fn cancelled_timer_never_fires() {
-        let t0 = Instant::now();
+        let t0 = SystemTime::now();
         let mut s = TimerState::default();
         s.start(1, t0);
         s.cancel();
@@ -148,7 +156,7 @@ mod tests {
     }
     #[test]
     fn fires_exactly_once() {
-        let t0 = Instant::now();
+        let t0 = SystemTime::now();
         let mut s = TimerState::default();
         s.start(1, t0);
         assert_eq!(s.tick(t0 + Duration::from_secs(60)), Some(1));
