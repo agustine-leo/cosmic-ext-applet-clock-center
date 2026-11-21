@@ -1,0 +1,13 @@
+[Desktop Entry]
+Name=Clock Center
+Comment=Date, time, notifications, calendar, media and timers
+Type=Application
+Exec=cosmic-ext-applet-clock-center
+Terminal=false
+Categories=COSMIC;
+Keywords=COSMIC;Applet;Clock;Notification;
+Icon=io.github.agustine_leo.CosmicExtAppletClockCenter
+NoDisplay=true
+X-CosmicApplet=true
+X-CosmicShrinkable=true
+X-OverflowPriority=10
