@@ -133,6 +133,10 @@ impl App {
     }
 
     fn popup_closed(&mut self) {
+        // Each opening starts collapsed: groups show only their newest card
+        // and no card is expanded.
+        self.expanded_groups.clear();
+        self.expanded_cards.clear();
         if let Some(v) = self.popup_dnd.on_close() {
             notifications::dnd::write(v);
             if let Some(m) = notifications::dnd::marker_path() {

@@ -1,6 +1,6 @@
 [package]
 name = "cosmic-ext-applet-clock-center"
-version = "0.2.4"
+version = "0.2.5"
 edition = "2021"
 license = "GPL-3.0-only"
 description = "One date/time button for the COSMIC panel: notifications, calendar and media in one popup"
