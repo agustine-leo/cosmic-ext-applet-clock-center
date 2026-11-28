@@ -169,3 +169,11 @@ pub fn dot<M: 'static>() -> Element<'static, M> {
         }))
         .into()
 }
+
+/// Dismiss glyph, embedded so icon themes that blank `window-close-symbolic`
+/// (to hide titlebar close buttons) do not hide it.
+pub const CLOSE_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path fill="#232323" d="M4.3 4.3a1 1 0 0 1 1.4 0L8 6.6l2.3-2.3a1 1 0 1 1 1.4 1.4L9.4 8l2.3 2.3a1 1 0 0 1-1.4 1.4L8 9.4l-2.3 2.3a1 1 0 0 1-1.4-1.4L6.6 8 4.3 5.7a1 1 0 0 1 0-1.4z"/></svg>"##;
+
+pub fn close_glyph(size: u16) -> cosmic::widget::Icon {
+    cosmic::widget::icon::icon(cosmic::widget::icon::from_svg_bytes(CLOSE_SVG).symbolic(true)).size(size)
+}

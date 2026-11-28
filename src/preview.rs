@@ -3,7 +3,8 @@
 //! be captured without clicking the panel: `CLOCK_CENTER_PREVIEW=1
 //! cosmic-ext-applet-clock-center`. `CLOCK_CENTER_PREVIEW=empty` shows the
 //! empty states (no notifications, no player, weather not yet fetched);
-//! `expanded` opens a row and a side. All content is synthetic.
+//! `expanded` opens a row and a side; `settings` opens the world clock and
+//! weather settings with sample search results. All content is synthetic.
 
 use std::collections::HashSet;
 use std::time::{Duration, Instant, SystemTime};
@@ -31,9 +32,10 @@ pub struct Preview {
     cards: HashSet<u32>,
     groups: HashSet<String>,
     clocks: Vec<crate::config::WorldClock>,
-    place: Option<crate::config::WeatherPlace>,
-    weather: Option<crate::extras::Weather>,
+    places: Vec<crate::config::WeatherPlace>,
+    readings: std::collections::HashMap<String, crate::extras::Weather>,
     now: jiff::Zoned,
+    edit: Option<crate::extras::Edit>,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -111,9 +113,16 @@ impl cosmic::Application for Preview {
             crate::config::WorldClock { label: "Tokyo".into(), zone: "Asia/Tokyo".into() },
             crate::config::WorldClock { label: "London".into(), zone: "Europe/London".into() },
         ];
-        let place = Some(crate::config::WeatherPlace { name: "Kuala Lumpur".into(), latitude: 3.14, longitude: 101.69 });
-        // Sample reading (synthetic), so the preview needs no network.
-        let weather = (!empty).then_some(crate::extras::Weather { temperature: 31.0, code: 95, high: 33.0, low: 25.0 });
+        let places = vec![
+            crate::config::WeatherPlace { name: "Kuala Lumpur".into(), latitude: 3.14, longitude: 101.69 },
+            crate::config::WeatherPlace { name: "Kota Kinabalu".into(), latitude: 5.98, longitude: 116.07 },
+        ];
+        // Sample readings (synthetic), so the preview needs no network.
+        let mut readings = std::collections::HashMap::new();
+        if !empty {
+            readings.insert(places[0].key(), crate::extras::Weather { temperature: 31.0, code: 95, high: 33.0, low: 25.0, is_day: true });
+            readings.insert(places[1].key(), crate::extras::Weather { temperature: 29.0, code: 2, high: 31.0, low: 24.0, is_day: true });
+        }
         (
             Preview {
                 core,
@@ -124,9 +133,19 @@ impl cosmic::Application for Preview {
                 cards: if mode == "expanded" { HashSet::from([1]) } else { HashSet::new() },
                 groups: if mode == "expanded" { HashSet::from(["Whatsie".to_string()]) } else { HashSet::new() },
                 clocks,
-                place,
-                weather,
+                places,
+                readings,
                 now: jiff::Zoned::now(),
+                // `settings`: the credits in edit mode with sample search results.
+                edit: (mode == "settings").then(|| crate::extras::Edit {
+                    target: Some(crate::extras::Target::Clock),
+                    query: "Tok".into(),
+                    generation: 0,
+                    search: crate::extras::Search::Found(vec![
+                        crate::extras::City { name: "Tokyo".into(), detail: "Japan".into(), latitude: 35.69, longitude: 139.69, timezone: Some("Asia/Tokyo".into()) },
+                        crate::extras::City { name: "Tokoroa".into(), detail: "Waikato, New Zealand".into(), latitude: -38.22, longitude: 175.87, timezone: Some("Pacific/Auckland".into()) },
+                    ]),
+                }),
             },
             Task::none(),
         )
@@ -146,6 +165,12 @@ impl cosmic::Application for Preview {
             }
             Message::DismissNotification(id) => self.store.dismiss(id),
             Message::ClearNotifications => self.store.clear(),
+            Message::EditExtras(open) => self.edit = open.then(Default::default),
+            Message::CitySearchInput(q) => {
+                if let Some(e) = self.edit.as_mut() {
+                    e.query = q;
+                }
+            }
             other => println!("preview: {other:?}"),
         }
         Task::none()
@@ -164,9 +189,10 @@ impl cosmic::Application for Preview {
             today,
             first_day_of_week: 6,
             clocks: &self.clocks,
-            place: self.place.as_ref(),
-            weather: self.weather.as_ref(),
+            places: &self.places,
+            readings: &self.readings,
             now: &self.now,
+            edit: self.edit.as_ref(),
         }))
         .padding(PREVIEW_PADDING)
         .width(Length::Fill)

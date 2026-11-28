@@ -62,21 +62,28 @@ fn day_cell(day: i8, is_today: bool) -> Element<'static, Message> {
 }
 
 const CELL: f32 = 30.0;
+/// Baseline offset between the 64px day figure and the 22px weekday
+/// (measured from the render).
+const WEEKDAY_LIFT: f32 = 13.0;
 
-/// `shown` picks the month on screen; the header always shows today:
-/// the day figure at large scale, weekday and month under it.
-pub fn view<'a>(shown: Date, today: Date, first_day_of_week: u8) -> Element<'a, Message> {
+/// `shown` picks the month on screen; the header always shows today: the
+/// day figure at large scale beside the weekday (the month bar below names
+/// the month). `grid: false` draws the header only (settings open).
+pub fn view<'a>(shown: Date, today: Date, first_day_of_week: u8, grid: bool) -> Element<'a, Message> {
     let start = week_start(first_day_of_week);
     let header = row![
         text(today.strftime("%-d").to_string()).size(64).font(cosmic::font::bold()).class(color(CREAM)),
-        column![
-            text(today.strftime("%A").to_string()).size(15).font(cosmic::font::bold()).class(color(CREAM)),
-            text(today.strftime("%B %Y").to_string()).size(13).class(color(GREY)),
-        ]
-        .spacing(2),
+        // Bottom-aligned boxes put the small text's baseline lower than the
+        // big figure's; lift it by the difference in descent so both share one baseline.
+        cosmic::widget::container(text(today.strftime("%A").to_string()).size(22).font(cosmic::font::bold()).class(color(CREAM)))
+            .padding([0.0, 0.0, WEEKDAY_LIFT, 0.0]),
     ]
-    .spacing(12)
+    .spacing(14)
+    .padding([0.0, 0.0, 10.0, 0.0])
     .align_y(cosmic::iced::Alignment::End);
+    if !grid {
+        return header.into();
+    }
 
     let arrow = |name: &'static str, msg: Message| {
         button::custom(cosmic::widget::icon::from_name(name).size(14).symbolic(true)).padding(4).on_press(msg).class(flat(GREY))

@@ -93,12 +93,8 @@ fn one_line() -> Ellipsize {
     Ellipsize::End(EllipsizeHeightLimit::Lines(1))
 }
 
-/// Dismiss glyph, embedded so icon themes that blank `window-close-symbolic`
-/// (to hide titlebar close buttons) do not hide it.
-const CLOSE_SVG: &[u8] = br##"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path fill="#232323" d="M4.3 4.3a1 1 0 0 1 1.4 0L8 6.6l2.3-2.3a1 1 0 1 1 1.4 1.4L9.4 8l2.3 2.3a1 1 0 0 1-1.4 1.4L8 9.4l-2.3 2.3a1 1 0 0 1-1.4-1.4L6.6 8 4.3 5.7a1 1 0 0 1 0-1.4z"/></svg>"##;
-
 fn close_button(msg: Message) -> Element<'static, Message> {
-    button::custom(icon::icon(icon::from_svg_bytes(CLOSE_SVG).symbolic(true)).size(14))
+    button::custom(sleeve::close_glyph(14))
         .on_press(msg)
         .padding(4)
         .class(flat(GREY))
@@ -152,13 +148,20 @@ struct CardText {
     expandable: bool,
 }
 
+/// Characters that fit on one row line (about 300px of 14px text).
+const ONE_LINE_CHARS: usize = 40;
+
 fn card_text(n: &Notification, expanded: bool) -> CardText {
     let body = normalize_body(&n.body);
     let summary_line = n.summary.lines().next().unwrap_or_default().trim();
     // The text column is narrow (~35 chars), so offer expansion whenever
     // there is any body or the summary may be cut off.
-    let expandable = !body.is_empty()
-        || summary_line.chars().count() > 30
+    // Only offer expansion when it reveals something: a body longer than
+    // the one line a collapsed row shows, a summary that may be cut off, or
+    // the app's action buttons.
+    let expandable = body.contains('\n')
+        || body.chars().count() > ONE_LINE_CHARS
+        || summary_line.chars().count() > ONE_LINE_CHARS
         || n.summary.trim().contains('\n')
         || !action_buttons(&n.actions).is_empty();
     let (summary, body) = if expanded {
@@ -278,7 +281,8 @@ mod tests {
         let t = card_text(&flameshot(), false);
         assert_eq!(t.summary, "Flameshot Info");
         assert_eq!(t.body.as_deref(), Some("Screenshot aborted."));
-        assert!(t.expandable);
+        // Short body, no actions: nothing more to show, so no chevron.
+        assert!(!t.expandable);
     }
 
     #[test]
@@ -288,6 +292,18 @@ mod tests {
         let t = card_text(&n, true);
         assert_eq!(t.body.as_deref(), Some("line one\nline two"));
         assert_eq!(card_text(&n, false).body.as_deref(), Some("line one"));
+    }
+
+    #[test]
+    fn long_or_multiline_body_or_actions_are_expandable() {
+        let mut n = flameshot();
+        n.body = "x".repeat(60);
+        assert!(card_text(&n, false).expandable);
+        n.body = "one\ntwo".into();
+        assert!(card_text(&n, false).expandable);
+        n.body = "hello".into();
+        n.actions = vec![("reply".parse().unwrap(), "Reply".into())];
+        assert!(card_text(&n, false).expandable);
     }
 
     #[test]
@@ -304,7 +320,7 @@ mod tests {
     #[test]
     fn dismiss_icon_does_not_depend_on_icon_theme() {
         // Themes may blank window-close-symbolic (e.g. to hide titlebar close buttons).
-        assert!(std::str::from_utf8(CLOSE_SVG).unwrap().contains("<path"));
+        assert!(std::str::from_utf8(sleeve::CLOSE_SVG).unwrap().contains("<path"));
     }
 
 

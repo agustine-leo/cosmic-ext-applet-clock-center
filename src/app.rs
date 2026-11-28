@@ -70,9 +70,17 @@ pub struct App {
     media_art: Option<(String, cosmic::widget::icon::Handle)>,
     /// Animation frame of the playing indicator.
     indicator_frame: u32,
+    /// Now-playing strip text and the width of one marquee pass (cached:
+    /// measuring text every frame would be wasted work).
+    strip: Option<(String, f32)>,
     /// World clocks and weather place.
     cc_config: config::ClockCenterConfig,
-    weather: Option<crate::extras::Weather>,
+    /// Weather cities (resolved from config, including the legacy key).
+    places: Vec<config::WeatherPlace>,
+    /// Latest reading per city, keyed by `WeatherPlace::key`.
+    readings: std::collections::HashMap<String, crate::extras::Weather>,
+    /// World clock / weather settings, while open.
+    edit: Option<crate::extras::Edit>,
 }
 
 #[derive(Debug, Clone)]
@@ -103,7 +111,17 @@ pub enum Message {
     IndicatorFrame,
     ClockCenterConfigChanged(config::ClockCenterConfig),
     RefreshWeather,
-    Weather(Option<crate::extras::Weather>),
+    Weather(String, Option<crate::extras::Weather>),
+    EditExtras(bool),
+    CitySearchInput(String),
+    /// Search now (Enter), or after the debounce for this generation.
+    CitySearch(Option<u64>),
+    CityResults(u64, Option<Vec<crate::extras::City>>),
+    OpenCitySearch(crate::extras::Target),
+    CloseCitySearch,
+    PickCity(usize),
+    RemoveClock(usize),
+    RemoveWeather(usize),
 }
 
 impl App {
@@ -143,6 +161,7 @@ impl App {
         // and no card is expanded.
         self.expanded_groups.clear();
         self.expanded_cards.clear();
+        self.edit = None;
         // Unread rows keep their dot while the popup is open; seen on close.
         self.notifications.mark_all_read();
         if let Some(v) = self.popup_dnd.on_close() {
@@ -171,6 +190,10 @@ impl cosmic::Application for App {
     const APP_ID: &'static str = config::APP_ID;
 
     fn init(core: Core, _flags: Self::Flags) -> (Self, Task<Self::Message>) {
+        let cc_config = cosmic::cosmic_config::Config::new(config::CLOCK_CENTER_CONFIG_ID, config::ClockCenterConfig::VERSION)
+            .ok()
+            .and_then(|c| config::ClockCenterConfig::get_entry(&c).ok())
+            .unwrap_or_default();
         (
             Self {
                 core,
@@ -193,11 +216,11 @@ impl cosmic::Application for App {
                 players: Vec::new(),
                 media_art: None,
                 indicator_frame: 0,
-                cc_config: cosmic::cosmic_config::Config::new(config::CLOCK_CENTER_CONFIG_ID, config::ClockCenterConfig::VERSION)
-                    .ok()
-                    .and_then(|c| config::ClockCenterConfig::get_entry(&c).ok())
-                    .unwrap_or_default(),
-                weather: None,
+                strip: None,
+                cc_config: cc_config.clone(),
+                places: cc_config.places(),
+                readings: Default::default(),
+                edit: None,
             },
             Task::done(cosmic::Action::App(Message::RefreshWeather)),
         )
@@ -277,22 +300,121 @@ impl cosmic::Application for App {
                 Task::none()
             }
             Message::ClockCenterConfigChanged(c) => {
-                let place_changed = c.weather != self.cc_config.weather;
+                let places = c.places();
                 self.cc_config = c;
-                if place_changed {
-                    self.weather = None;
+                if places != self.places {
+                    // Keep readings for cities still listed; fetch the rest.
+                    let keys: HashSet<String> = places.iter().map(|p| p.key()).collect();
+                    self.readings.retain(|k, _| keys.contains(k));
+                    self.places = places;
                     return Task::done(cosmic::Action::App(Message::RefreshWeather));
                 }
                 Task::none()
             }
-            Message::RefreshWeather => match self.cc_config.weather.clone() {
-                Some(place) => Task::perform(crate::extras::fetch(place), |w| cosmic::Action::App(Message::Weather(w))),
-                None => Task::none(),
-            },
-            Message::Weather(w) => {
+            Message::EditExtras(open) => {
+                self.edit = open.then(Default::default);
+                Task::none()
+            }
+            Message::CitySearchInput(q) => {
+                let Some(e) = self.edit.as_mut() else { return Task::none() };
+                e.query = q;
+                e.generation += 1;
+                if !crate::extras::searchable(&e.query) {
+                    e.search = crate::extras::Search::Idle;
+                    return Task::none();
+                }
+                let generation = e.generation;
+                Task::perform(tokio::time::sleep(crate::extras::SEARCH_DEBOUNCE), move |_| {
+                    cosmic::Action::App(Message::CitySearch(Some(generation)))
+                })
+            }
+            Message::CitySearch(after_debounce) => {
+                let Some(e) = self.edit.as_mut() else { return Task::none() };
+                // A newer keystroke superseded this debounce.
+                if after_debounce.is_some_and(|g| g != e.generation) || !crate::extras::searchable(&e.query) {
+                    return Task::none();
+                }
+                // Keep showing the previous results while the new ones load.
+                if !matches!(e.search, crate::extras::Search::Found(_)) {
+                    e.search = crate::extras::Search::Searching;
+                }
+                let generation = e.generation;
+                Task::perform(crate::extras::geocode(e.query.clone()), move |r| {
+                    cosmic::Action::App(Message::CityResults(generation, r))
+                })
+            }
+            Message::CityResults(generation, r) => {
+                if let Some(e) = self.edit.as_mut().filter(|e| e.generation == generation) {
+                    e.search = match r {
+                        Some(c) => crate::extras::Search::Found(c),
+                        None => crate::extras::Search::Failed,
+                    };
+                }
+                Task::none()
+            }
+            Message::OpenCitySearch(target) => {
+                if let Some(e) = self.edit.as_mut() {
+                    *e = crate::extras::Edit { target: Some(target), generation: e.generation + 1, ..Default::default() };
+                }
+                cosmic::widget::text_input::focus(crate::extras::SEARCH_ID.clone())
+            }
+            Message::CloseCitySearch => {
+                if let Some(e) = self.edit.as_mut() {
+                    *e = crate::extras::Edit { generation: e.generation + 1, ..Default::default() };
+                }
+                Task::none()
+            }
+            Message::PickCity(i) => {
+                let Some(c) = self.found_city(i) else { return Task::none() };
+                let target = self.edit.as_ref().and_then(|e| e.target);
+                if let Some(e) = self.edit.as_mut() {
+                    *e = crate::extras::Edit { generation: e.generation + 1, ..Default::default() };
+                }
+                match target {
+                    Some(crate::extras::Target::Clock) => {
+                        if let Some(zone) = c.timezone {
+                            let mut v = self.cc_config.world_clocks.clone();
+                            v.push(config::WorldClock { label: c.name, zone });
+                            self.save(|cfg, cc| cc.set_world_clocks(cfg, v));
+                        }
+                        Task::none()
+                    }
+                    Some(crate::extras::Target::Weather) => {
+                        let place = c.place();
+                        let mut v = self.places.clone();
+                        if v.len() < config::MAX_WEATHER_PLACES && !v.iter().any(|p| p.key() == place.key()) {
+                            v.push(place);
+                            self.save_places(v);
+                        }
+                        Task::none()
+                    }
+                    None => Task::none(),
+                }
+            }
+            Message::RemoveClock(i) => {
+                let mut v = self.cc_config.world_clocks.clone();
+                if i < v.len() {
+                    v.remove(i);
+                    self.save(|cfg, c| c.set_world_clocks(cfg, v));
+                }
+                Task::none()
+            }
+            Message::RemoveWeather(i) => {
+                let mut v = self.places.clone();
+                if i < v.len() {
+                    v.remove(i);
+                    self.save_places(v);
+                }
+                Task::none()
+            }
+            Message::RefreshWeather => Task::batch(self.places.iter().cloned().map(|p| {
+                let key = p.key();
+                Task::perform(crate::extras::fetch(p), move |w| cosmic::Action::App(Message::Weather(key.clone(), w)))
+            })),
+            Message::Weather(key, w) => {
                 // Keep the last good reading through a failed refetch.
-                if w.is_some() {
-                    self.weather = w;
+                if let Some(w) = w {
+                    self.readings.insert(key, w);
                 }
                 Task::none()
             }
@@ -368,6 +490,19 @@ impl cosmic::Application for App {
             }
             Message::Players(players) => {
                 self.players = players;
+                let title = self
+                    .players
+                    .iter()
+                    .find(|p| p.status == media::PlaybackStatus::Playing)
+                    .map(|p| crate::indicator::strip_title(&p.title, &p.artist))
+                    .filter(|t| !t.is_empty());
+                if title.as_deref() != self.strip.as_ref().map(|(t, _)| t.as_str()) {
+                    self.strip = title.map(|t| {
+                        let period = crate::indicator::text_width(&crate::indicator::pass_text(&t));
+                        (t, period)
+                    });
+                    self.indicator_frame = 0;
+                }
                 let url = media::pick_player(&self.players).and_then(|p| p.art_url.clone());
                 if self.media_art.as_ref().map(|(u, _)| u) != url.as_ref() {
                     self.media_art = url.and_then(|u| {
@@ -428,7 +563,7 @@ impl cosmic::Application for App {
         };
         // Only animate while something is playing: no ticking otherwise.
         let indicator_tick = if media::any_playing(&self.players) {
-            cosmic::iced::time::every(std::time::Duration::from_millis(166)).map(|_| Message::IndicatorFrame)
+            cosmic::iced::time::every(crate::indicator::FRAME).map(|_| Message::IndicatorFrame)
         } else {
             Subscription::none()
         };
@@ -460,7 +595,7 @@ impl cosmic::Application for App {
                     }
                     Message::ClockCenterConfigChanged(u.config)
                 }),
-            if self.cc_config.weather.is_some() {
+            if !self.places.is_empty() {
                 cosmic::iced::time::every(crate::extras::WEATHER_EVERY).map(|_| Message::RefreshWeather)
             } else {
                 Subscription::none()
@@ -474,13 +609,26 @@ impl cosmic::Application for App {
     fn view(&self) -> Element<'_, Message> {
         let padding = self.core.applet.suggested_padding(true).0;
         let label = self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config));
-        let mut content = row![].spacing(4).align_y(cosmic::iced::Alignment::Center);
-        if media::any_playing(&self.players) {
-            content = content.push(crate::indicator::view(self.indicator_frame));
+        // Extras (unread dot, now-playing strip) sit right of the time; an
+        // empty block of the same width on the left keeps the time centred.
+        use cosmic::iced::Length;
+        let strip = self.strip.as_ref().filter(|_| media::any_playing(&self.players));
+        let unread = self.notifications.has_unread();
+        let mut right = row![].spacing(EXTRA_GAP).align_y(cosmic::iced::Alignment::Center);
+        if unread {
+            right = right.push(unread_dot());
+        }
+        if let Some((title, period)) = strip {
+            right = right.push(crate::indicator::strip(self.indicator_frame, title, *period));
+        }
+        let right_width = extras_width(unread, strip.is_some());
+        let mut content = row![].spacing(EXTRA_GAP).align_y(cosmic::iced::Alignment::Center);
+        if right_width > 0.0 {
+            content = content.push(cosmic::widget::Space::new().width(Length::Fixed(right_width)));
         }
         content = content.push(label);
-        if self.notifications.has_unread() {
-            content = content.push(unread_dot());
+        if right_width > 0.0 {
+            content = content.push(right);
         }
         let btn = button::custom(content)
             .padding([0, padding])
@@ -511,9 +659,10 @@ impl cosmic::Application for App {
             today: self.now.date(),
             first_day_of_week: self.time_config.first_day_of_week,
             clocks: &self.cc_config.world_clocks,
-            place: self.cc_config.weather.as_ref(),
-            weather: self.weather.as_ref(),
+            places: &self.places,
+            readings: &self.readings,
             now: &self.now,
+            edit: self.edit.as_ref(),
         });
         self.core
             .applet
@@ -548,9 +697,10 @@ pub struct PopupData<'a> {
     pub today: jiff::civil::Date,
     pub first_day_of_week: u8,
     pub clocks: &'a [config::WorldClock],
-    pub place: Option<&'a config::WeatherPlace>,
-    pub weather: Option<&'a crate::extras::Weather>,
+    pub places: &'a [config::WeatherPlace],
+    pub readings: &'a std::collections::HashMap<String, crate::extras::Weather>,
     pub now: &'a jiff::Zoned,
+    pub edit: Option<&'a crate::extras::Edit>,
 }
 
 /// The popup's two columns at their fixed size (without the popup frame).
@@ -567,10 +717,14 @@ pub fn popup_content(d: PopupData<'_>) -> Element<'_, Message> {
     left = left.push(notifications::view(d.store, d.status, d.expansion, d.do_not_disturb));
 
     // Right: calendar, then the credits (world clocks, weather).
+    let credits = match d.edit {
+        Some(e) => crate::extras::edit_view(d.clocks, d.places, d.readings, e, d.now),
+        None => crate::extras::view(d.clocks, d.places, d.readings, d.now),
+    };
     let right = column![
-        crate::calendar::view(d.shown, d.today, d.first_day_of_week),
+        crate::calendar::view(d.shown, d.today, d.first_day_of_week, d.edit.is_none()),
         crate::sleeve::hairline(),
-        crate::extras::view(d.clocks, d.place, d.weather, d.now),
+        credits,
     ]
     .spacing(16)
     .width(Length::Fixed(RIGHT_WIDTH));
@@ -583,6 +737,34 @@ pub const POPUP_SIZE: (f32, f32) = (POPUP_WIDTH, MIN_HEIGHT + 2.0 * POPUP_PADDIN
 pub const PREVIEW_PADDING: f32 = POPUP_PADDING;
 
 impl App {
+    /// The `i`th city in the open settings' search results.
+    fn found_city(&self, i: usize) -> Option<crate::extras::City> {
+        match self.edit.as_ref().map(|e| &e.search) {
+            Some(crate::extras::Search::Found(c)) => c.get(i).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Save the weather list and drop the legacy single-place key.
+    fn save_places(&mut self, v: Vec<config::WeatherPlace>) {
+        self.save(|cfg, cc| {
+            cc.set_weather(cfg, None)?;
+            cc.set_weather_places(cfg, v)
+        });
+    }
+
+    /// Write a Clock Center setting; the config watch then refreshes state.
+    fn save(&mut self, f: impl FnOnce(&cosmic::cosmic_config::Config, &mut config::ClockCenterConfig) -> Result<bool, cosmic::cosmic_config::Error>) {
+        match cosmic::cosmic_config::Config::new(config::CLOCK_CENTER_CONFIG_ID, config::ClockCenterConfig::VERSION) {
+            Ok(cfg) => {
+                if let Err(err) = f(&cfg, &mut self.cc_config) {
+                    tracing::error!(?err, "Failed to save clock center settings");
+                }
+            }
+            Err(err) => tracing::error!(?err, "Failed to open clock center settings"),
+        }
+    }
+
     /// Forget expansion state for notifications/groups that no longer exist.
     fn prune_expansion(&mut self) {
         let store = &self.notifications;
@@ -597,9 +779,20 @@ fn shift_month(d: jiff::civil::Date, months: i32) -> jiff::civil::Date {
     d.checked_add(jiff::Span::new().months(months)).unwrap_or(d)
 }
 
+/// Gap between the time and the extras beside it.
+const EXTRA_GAP: f32 = 6.0;
+const UNREAD_DOT: f32 = 6.0;
+
+/// Width of the extras right of the time (dot, strip, gaps between them).
+fn extras_width(unread: bool, strip: bool) -> f32 {
+    let parts = [unread.then_some(UNREAD_DOT), strip.then_some(crate::indicator::STRIP_WIDTH)];
+    let present: Vec<f32> = parts.into_iter().flatten().collect();
+    present.iter().sum::<f32>() + EXTRA_GAP * present.len().saturating_sub(1) as f32
+}
+
 /// Small accent-coloured dot shown after the time while there are unread notifications.
 fn unread_dot() -> Element<'static, Message> {
-    container(space::horizontal().width(6).height(6))
+    container(space::horizontal().width(UNREAD_DOT).height(UNREAD_DOT))
         .class(cosmic::theme::Container::custom(|theme| container::Style {
             background: Some(cosmic::iced::Color::from(theme.cosmic().accent_color()).into()),
             border: cosmic::iced::Border { radius: 3.0.into(), ..Default::default() },
@@ -611,6 +804,13 @@ fn unread_dot() -> Element<'static, Message> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn extras_width_balances_the_right_side() {
+        assert_eq!(extras_width(false, false), 0.0);
+        assert_eq!(extras_width(true, false), UNREAD_DOT);
+        assert_eq!(extras_width(true, true), UNREAD_DOT + EXTRA_GAP + crate::indicator::STRIP_WIDTH);
+    }
 
     #[test]
     fn popup_surface_enforces_min_height() {
