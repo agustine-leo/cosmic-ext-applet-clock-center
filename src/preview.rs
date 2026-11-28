@@ -90,6 +90,7 @@ impl cosmic::Application for Preview {
             let mut mum = sample(1, "Whatsie", "whatsie", "Mum", "Dinner at 7? Bring the dish you borrowed last week if you still have it.", 1, 0, &[("reply", "Reply"), ("read", "Mark as Read")]);
             mum.hints.push(Hint::Image(Image::Data { width: 96, height: 96, data: raster(96, [0x4f, 0x6f, 0x52], [0x7d, 0x9a, 0x6e], [0xd9, 0xe4, 0xd2]) }));
             for n in [
+                sample(6, "flameshot", "flameshot", "Flameshot Info", "Capture saved as /tmp/screenshot_1764316082_x7Kq9.png", 1, 200, &[]),
                 sample(5, "Files", "folder-download", "Download complete", "fedora-workstation-45.iso", 0, 160, &[("open", "Open")]),
                 sample(4, "Whatsie", "whatsie", "Dad", "Call me when you can", 1, 92, &[]),
                 sample(3, "Battery", "battery-caution-symbolic", "Battery at 6%", "Plug in now. The laptop suspends in about 4 minutes.", 2, 3, &[]),
@@ -130,7 +131,7 @@ impl cosmic::Application for Preview {
                 players,
                 art,
                 // `expanded`: the newest chat row open and its side showing all rows.
-                cards: if mode == "expanded" { HashSet::from([1]) } else { HashSet::new() },
+                cards: if mode == "expanded" { HashSet::from([1, 6]) } else { HashSet::new() },
                 groups: if mode == "expanded" { HashSet::from(["Whatsie".to_string()]) } else { HashSet::new() },
                 clocks,
                 places,

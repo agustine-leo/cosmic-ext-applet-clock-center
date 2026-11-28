@@ -99,7 +99,7 @@ Rows stay unread (dot visible) while the popup is open and are marked read when 
 "Edit" swaps the month nav and grid for the settings (the day header stays). Each list has its own action: clocks show their live time, weather cities their temperature, each with an embedded × (icon themes may blank `window-close-symbolic`), then "+ Add city", which opens a search field right under that list with the cursor in it. The search runs as you type (300ms after the last keystroke, from two characters; stale replies dropped) against Open-Meteo geocoding. Results are whole-row buttons: city over "region, country"; a clock whose zone is already shown reads "Same time as {city}" and a weather city already listed reads "Already added", both disabled. "Cancel" closes the search; "Done" returns to the calendar.
 
 ### Panel Strip
-While media plays, a 140px strip sits right of the time: the "title · artist" scrolls dimmed (85% foreground) at 20px/s, looping on its measured width, under a rolling wave of 28 accent bars at 45% opacity (20 fps). An empty block of the same width as the right-hand extras (strip, unread dot) sits left of the time, so the time stays centred on the panel.
+While media plays, a 140px strip sits right of the time: the "title · artist" scrolls dimmed (85% foreground) at 20px/s, looping on its measured width, under a rolling wave of 28 accent bars at 45% opacity (20 fps). The unread dot sits left of the time. Padding outside the button (so the pressed highlight never covers it) evens out the dot and the strip, so the time stays centred on the panel.
 
 ### Buttons
 Flat everywhere: no fill at rest, the theme's component hover and pressed fills under the pointer, 4px radius. The Do Not Disturb toggler stays COSMIC's native control.

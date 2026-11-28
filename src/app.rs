@@ -609,40 +609,37 @@ impl cosmic::Application for App {
     fn view(&self) -> Element<'_, Message> {
         let padding = self.core.applet.suggested_padding(true).0;
         let label = self.core.applet.text(crate::clock::format_label(&self.now, &self.time_config));
-        // Extras (unread dot, now-playing strip) sit right of the time; an
-        // empty block of the same width on the left keeps the time centred.
-        use cosmic::iced::Length;
+        // The unread dot sits left of the time, the now-playing strip right
+        // of it. Empty space outside the button evens out the two sides, so
+        // the time stays centred without the pressed highlight covering it.
         let strip = self.strip.as_ref().filter(|_| media::any_playing(&self.players));
         let unread = self.notifications.has_unread();
-        let mut right = row![].spacing(EXTRA_GAP).align_y(cosmic::iced::Alignment::Center);
-        if unread {
-            right = right.push(unread_dot());
-        }
-        if let Some((title, period)) = strip {
-            right = right.push(crate::indicator::strip(self.indicator_frame, title, *period));
-        }
-        let right_width = extras_width(unread, strip.is_some());
         let mut content = row![].spacing(EXTRA_GAP).align_y(cosmic::iced::Alignment::Center);
-        if right_width > 0.0 {
-            content = content.push(cosmic::widget::Space::new().width(Length::Fixed(right_width)));
+        if unread {
+            content = content.push(unread_dot());
         }
         content = content.push(label);
-        if right_width > 0.0 {
-            content = content.push(right);
+        if let Some((title, period)) = strip {
+            content = content.push(crate::indicator::strip(self.indicator_frame, title, *period));
         }
+        let (pad_left, pad_right) = balance(unread, strip.is_some());
         let btn = button::custom(content)
             .padding([0, padding])
             .on_press_down(Message::TogglePopup)
             .class(cosmic::theme::Button::AppletIcon);
-        autosize::autosize(
-            if let Some(tracker) = self.rectangle_tracker.as_ref() {
-                Element::from(tracker.container(0, btn).ignore_bounds(true))
-            } else {
-                btn.into()
-            },
-            AUTOSIZE_MAIN_ID.clone(),
-        )
-        .into()
+        let btn: Element<'_, Message> = if let Some(tracker) = self.rectangle_tracker.as_ref() {
+            Element::from(tracker.container(0, btn).ignore_bounds(true))
+        } else {
+            btn.into()
+        };
+        // Padding on a plain container, not spacer widgets in a row: a
+        // container is transparent to the widget tree, while the rectangle
+        // tracker reports a stateless tag, so beside spacers in a row the
+        // tree diff could hand the button a spacer's state (it panicked).
+        let btn = container(btn)
+            .padding(cosmic::iced::Padding { left: pad_left, right: pad_right, ..cosmic::iced::Padding::ZERO })
+            .align_y(cosmic::iced::Alignment::Center);
+        autosize::autosize(btn, AUTOSIZE_MAIN_ID.clone()).into()
     }
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
@@ -783,11 +780,12 @@ fn shift_month(d: jiff::civil::Date, months: i32) -> jiff::civil::Date {
 const EXTRA_GAP: f32 = 6.0;
 const UNREAD_DOT: f32 = 6.0;
 
-/// Width of the extras right of the time (dot, strip, gaps between them).
-fn extras_width(unread: bool, strip: bool) -> f32 {
-    let parts = [unread.then_some(UNREAD_DOT), strip.then_some(crate::indicator::STRIP_WIDTH)];
-    let present: Vec<f32> = parts.into_iter().flatten().collect();
-    present.iter().sum::<f32>() + EXTRA_GAP * present.len().saturating_sub(1) as f32
+/// Empty space (left, right) outside the panel button that evens out the
+/// unread dot (left of the time) and the now-playing strip (right of it).
+fn balance(unread: bool, strip: bool) -> (f32, f32) {
+    let left = if unread { UNREAD_DOT + EXTRA_GAP } else { 0.0 };
+    let right = if strip { EXTRA_GAP + crate::indicator::STRIP_WIDTH } else { 0.0 };
+    ((right - left).max(0.0), (left - right).max(0.0))
 }
 
 /// Small accent-coloured dot shown after the time while there are unread notifications.
@@ -806,10 +804,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn extras_width_balances_the_right_side() {
-        assert_eq!(extras_width(false, false), 0.0);
-        assert_eq!(extras_width(true, false), UNREAD_DOT);
-        assert_eq!(extras_width(true, true), UNREAD_DOT + EXTRA_GAP + crate::indicator::STRIP_WIDTH);
+    fn balance_keeps_the_time_centred() {
+        assert_eq!(balance(false, false), (0.0, 0.0));
+        assert_eq!(balance(true, false), (0.0, UNREAD_DOT + EXTRA_GAP));
+        let strip = EXTRA_GAP + crate::indicator::STRIP_WIDTH;
+        assert_eq!(balance(false, true), (strip, 0.0));
+        assert_eq!(balance(true, true), (strip - UNREAD_DOT - EXTRA_GAP, 0.0));
     }
 
     #[test]

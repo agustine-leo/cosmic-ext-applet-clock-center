@@ -6,7 +6,7 @@ use std::collections::HashSet;
 
 use cosmic::{
     iced::{
-        advanced::text::{Ellipsize, EllipsizeHeightLimit},
+        advanced::text::{Ellipsize, EllipsizeHeightLimit, Wrapping},
         widget::{column, row},
         Alignment, Length,
     },
@@ -211,11 +211,13 @@ fn track(n: &Notification, expanded: bool, unread: bool) -> Element<'_, Message>
     let lead = container(picture(n)).width(Length::Fixed(28.0)).padding([1, 0, 0, 0]);
 
     let summary = text(t.summary).size(ROW).font(cosmic::font::bold()).width(Length::Fill).class(color(CREAM));
-    let summary = if expanded { summary } else { summary.ellipsize(one_line()) };
+    // Expanded text may hold long unbroken runs (paths, URLs): let them
+    // break inside the word so expanding always shows all of it.
+    let summary = if expanded { summary.wrapping(Wrapping::WordOrGlyph) } else { summary.ellipsize(one_line()) };
     let mut texts = column![summary].spacing(2).width(Length::Fill);
     if let Some(body) = t.body {
         let body = text(body).size(ROW).width(Length::Fill).class(color(GREY));
-        texts = texts.push(if expanded { body } else { body.ellipsize(one_line()) });
+        texts = texts.push(if expanded { body.wrapping(Wrapping::WordOrGlyph) } else { body.ellipsize(one_line()) });
     }
 
     let body_area = cosmic::widget::mouse_area(row![lead, texts].spacing(6).align_y(Alignment::Start).width(Length::Fill))
