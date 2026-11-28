@@ -275,51 +275,59 @@ pub async fn send_command(bus_name: String, cmd: MediaCommand) {
 /// Art (or a music icon), title, "artist · player" and transport buttons.
 /// Renders nothing when there is no player to show.
 pub fn view<'a>(players: &'a [PlayerState], art: Option<&'a icon::Handle>) -> Element<'a, Message> {
+    use crate::sleeve::{blank_cover, color, flat, CREAM, GREY, ORANGE};
     let Some(p) = pick_player(players) else {
         return row![].into();
     };
+    // The cover: album art is one of the sleeve's only images.
+    const COVER: f32 = 120.0;
     let art: Element<'a, Message> = match art {
-        Some(h) => icon::icon(h.clone()).size(48).into(),
-        None => container(icon::from_name("audio-x-generic-symbolic").size(32).symbolic(true).icon())
-            .center(Length::Fixed(48.0))
+        Some(h) => icon::icon(h.clone()).size(COVER as u16).into(),
+        None => container(icon::from_name("audio-x-generic-symbolic").size(40).symbolic(true).icon())
+            .center(Length::Fixed(COVER))
+            .class(blank_cover())
             .into(),
     };
-    let subtitle = match (p.artist.is_empty(), p.identity.is_empty()) {
+    let byline = match (p.artist.is_empty(), p.identity.is_empty()) {
         (false, false) => format!("{} · {}", p.artist, p.identity),
         (false, true) => p.artist.clone(),
         _ => p.identity.clone(),
     };
-    let ctl = |name: &'static str, cmd| {
-        button::icon(icon::from_name(name).size(16).symbolic(true))
-            .on_press(Message::MediaCommand(p.bus_name.clone(), cmd))
-    };
     let one_line = Ellipsize::End(EllipsizeHeightLimit::Lines(1));
-    let play_icon = if p.status == PlaybackStatus::Playing {
-        "media-playback-pause-symbolic"
-    } else {
-        "media-playback-start-symbolic"
+    let playing = p.status == PlaybackStatus::Playing;
+    let play_icon = if playing { "media-playback-pause-symbolic" } else { "media-playback-start-symbolic" };
+    let ctl = |name: &'static str, cmd, fg| {
+        button::custom(icon::from_name(name).size(20).symbolic(true))
+            .padding(6)
+            .on_press(Message::MediaCommand(p.bus_name.clone(), cmd))
+            .class(flat(fg))
     };
-    let space = cosmic::theme::spacing();
-    // Same card style and padding as the notification cards.
-    container(
-        row![
-            art,
-            column![
-                text::body(p.title.as_str()).ellipsize(one_line).width(Length::Fill),
-                text::caption(subtitle).ellipsize(one_line).width(Length::Fill),
+    let title = text(p.title.as_str())
+        .size(20)
+        .font(cosmic::font::bold())
+        .class(color(CREAM))
+        .ellipsize(Ellipsize::End(EllipsizeHeightLimit::Lines(2)))
+        .width(Length::Fill);
+    row![
+        art,
+        column![
+            title,
+            text(byline).size(14).class(color(GREY)).ellipsize(one_line).width(Length::Fill),
+            cosmic::widget::Space::new().height(Length::Fixed(8.0)),
+            row![
+                ctl("media-skip-backward-symbolic", MediaCommand::Previous, CREAM),
+                ctl(play_icon, MediaCommand::PlayPause, if playing { ORANGE } else { CREAM }),
+                ctl("media-skip-forward-symbolic", MediaCommand::Next, CREAM),
             ]
-            .spacing(2)
-            .width(Length::Fill),
-            ctl("media-skip-backward-symbolic", MediaCommand::Previous),
-            ctl(play_icon, MediaCommand::PlayPause),
-            ctl("media-skip-forward-symbolic", MediaCommand::Next),
+            .spacing(4)
+            // Pull the first glyph in line with the text above.
+            .padding([0.0, 0.0, 0.0, 0.0]),
         ]
-        .spacing(space.space_xxs)
-        .align_y(Alignment::Center),
-    )
-    .padding(space.space_xs)
-    .class(cosmic::theme::Container::Card)
-    .width(Length::Fill)
+        .spacing(2)
+        .width(Length::Fill),
+    ]
+    .spacing(16)
+    .align_y(Alignment::End)
     .into()
 }
 

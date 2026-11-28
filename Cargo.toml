@@ -21,6 +21,7 @@ libcosmic = { git = "https://github.com/pop-os/libcosmic", default-features = fa
 zbus = { version = "5.14.0", default-features = false, features = ["tokio", "p2p"] }
 tokio = { version = "1.49.0", features = ["full"] }
 jiff = "0.2"
+serde_json = "1"
 futures-util = { version = "0.3", features = ["sink"] }
 serde = { version = "1.0.228", features = ["derive"] }
 tracing = "0.1"

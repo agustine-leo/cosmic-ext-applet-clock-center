@@ -32,3 +32,29 @@ impl Default for TimeAppletConfig {
         }
     }
 }
+
+pub const CLOCK_CENTER_CONFIG_ID: &str = "io.github.agustine_leo.CosmicExtAppletClockCenter";
+
+/// A world clock row: display label and IANA zone (`Asia/Tokyo`).
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct WorldClock {
+    pub label: String,
+    pub zone: String,
+}
+
+/// Where to fetch weather for (sent to Open-Meteo as latitude/longitude).
+#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+pub struct WeatherPlace {
+    pub name: String,
+    pub latitude: f64,
+    pub longitude: f64,
+}
+
+/// Clock Center's own settings (`io.github.agustine_leo.CosmicExtAppletClockCenter` v1).
+/// Both default to empty: nothing extra is shown and nothing is fetched.
+#[derive(Debug, Clone, Default, CosmicConfigEntry, PartialEq, serde::Deserialize, serde::Serialize)]
+#[version = 1]
+pub struct ClockCenterConfig {
+    pub world_clocks: Vec<WorldClock>,
+    pub weather: Option<WeatherPlace>,
+}

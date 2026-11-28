@@ -9,6 +9,7 @@ use cosmic::{
 use jiff::civil::{Date, Weekday};
 
 use crate::app::Message;
+use crate::sleeve::{accent_cell, caption, color, flat, hairline, Tone, CREAM, GREY};
 
 fn week_start(first_day_of_week: u8) -> Weekday {
     match first_day_of_week {
@@ -47,43 +48,51 @@ pub fn month_grid(year: i16, month: i8, first_day_of_week: u8) -> Vec<[Option<i8
     rows
 }
 
-/// A day cell. Days are not clickable, so they are plain text (a button without
-/// `on_press` renders dimmed as disabled in libcosmic); today gets an accent pill.
+/// A day cell. Days are not clickable, so they are plain text (a button
+/// without `on_press` renders dimmed as disabled in libcosmic). Today is a
+/// accent cell with bold figures.
 fn day_cell(day: i8, is_today: bool) -> Element<'static, Message> {
-    let label = text::body(format!("{day}"));
+    let label = text(format!("{day}")).size(13);
     let cell = if is_today {
-        container(label.class(cosmic::theme::Text::Custom(|theme| cosmic::iced::widget::text::Style {
-            color: Some(theme.cosmic().on_accent_color().into()),
-            ..Default::default()
-        })))
-        .class(cosmic::theme::Container::custom(|theme| container::Style {
-            background: Some(cosmic::iced::Color::from(theme.cosmic().accent_color()).into()),
-            border: cosmic::iced::Border { radius: theme.cosmic().corner_radii.radius_xl.into(), ..Default::default() },
-            ..Default::default()
-        }))
+        container(label.font(cosmic::font::bold()).class(color(Tone::OnAccent))).class(accent_cell())
     } else {
-        container(label)
+        container(label.class(color(CREAM)))
     };
-    cell.center(Length::Fill).height(Length::Fixed(40.0)).width(Length::Fill).into()
+    container(cell.center(Length::Fixed(CELL))).center_x(Length::Fill).height(Length::Fixed(CELL + 2.0)).into()
 }
 
-/// `shown` picks the month on screen; the header always shows today.
+const CELL: f32 = 30.0;
+
+/// `shown` picks the month on screen; the header always shows today:
+/// the day figure at large scale, weekday and month under it.
 pub fn view<'a>(shown: Date, today: Date, first_day_of_week: u8) -> Element<'a, Message> {
     let start = week_start(first_day_of_week);
-    let header = column::with_capacity(2)
-        .width(Length::Fill)
-        .push(text::title3(today.strftime("%A").to_string()))
-        .push(text::body(today.strftime("%B %-d, %Y").to_string()));
+    let header = row![
+        text(today.strftime("%-d").to_string()).size(64).font(cosmic::font::bold()).class(color(CREAM)),
+        column![
+            text(today.strftime("%A").to_string()).size(15).font(cosmic::font::bold()).class(color(CREAM)),
+            text(today.strftime("%B %Y").to_string()).size(13).class(color(GREY)),
+        ]
+        .spacing(2),
+    ]
+    .spacing(12)
+    .align_y(cosmic::iced::Alignment::End);
 
+    let arrow = |name: &'static str, msg: Message| {
+        button::custom(cosmic::widget::icon::from_name(name).size(14).symbolic(true)).padding(4).on_press(msg).class(flat(GREY))
+    };
     let nav = row::with_capacity(3)
         .width(Length::Fill)
-        .push(button::icon(cosmic::widget::icon::from_name("go-previous-symbolic")).on_press(Message::PrevMonth))
+        .push(arrow("go-previous-symbolic", Message::PrevMonth))
         .push(
-            text::heading(shown.strftime("%B %Y").to_string())
+            text(shown.strftime("%B %Y").to_string())
+                .size(13)
+                .font(cosmic::font::bold())
+                .class(color(CREAM))
                 .apply(container)
                 .center_x(Length::Fill),
         )
-        .push(button::icon(cosmic::widget::icon::from_name("go-next-symbolic")).on_press(Message::NextMonth))
+        .push(arrow("go-next-symbolic", Message::NextMonth))
         .align_y(cosmic::iced::Alignment::Center);
 
     let mut weekdays = row::with_capacity(7).width(Length::Fill);
@@ -94,28 +103,29 @@ pub fn view<'a>(shown: Date, today: Date, first_day_of_week: u8) -> Element<'a, 
             .and_then(|d| d.nth_weekday(1, wd).ok())
             .map(|d| d.strftime("%a").to_string())
             .unwrap_or_default();
-        weekdays = weekdays.push(text::caption(name).apply(container).center_x(Length::Fill));
+        weekdays = weekdays.push(caption::<Message>(name).apply(container).center_x(Length::Fill));
         wd = wd.next();
     }
 
-    let mut grid = column::with_capacity(6).width(Length::Fill).push(weekdays);
+    let mut grid = column::with_capacity(7).width(Length::Fill).spacing(2).push(weekdays);
     for week in month_grid(shown.year(), shown.month(), first_day_of_week) {
         let mut r = row::with_capacity(7).width(Length::Fill);
         for cell in week {
             r = r.push(match cell {
                 Some(d) => day_cell(d, Date::new(shown.year(), shown.month(), d).is_ok_and(|x| x == today)),
-                None => Element::from(cosmic::widget::Space::new().width(Length::Fill).height(Length::Fixed(40.0))),
+                None => Element::from(cosmic::widget::Space::new().width(Length::Fill).height(Length::Fixed(CELL + 2.0))),
             });
         }
         grid = grid.push(r);
     }
 
-    column::with_capacity(3)
+    column::with_capacity(5)
         .width(Length::Fill)
         .push(header)
+        .push(hairline())
         .push(nav)
         .push(grid)
-        .spacing(8)
+        .spacing(10)
         .into()
 }
 

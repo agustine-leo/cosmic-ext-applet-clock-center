@@ -39,6 +39,10 @@ impl NotificationStore {
         self.unread.clear();
     }
 
+    pub fn is_unread(&self, id: u32) -> bool {
+        self.unread.contains(&id)
+    }
+
     pub fn has_unread(&self) -> bool {
         !self.unread.is_empty()
     }

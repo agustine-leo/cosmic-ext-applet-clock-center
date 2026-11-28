@@ -8,6 +8,9 @@ mod indicator;
 mod localize;
 mod media;
 mod notifications;
+mod preview;
+mod sleeve;
+mod extras;
 
 fn main() -> cosmic::iced::Result {
     // Default to info for this crate (fmt::init() alone filters everything below ERROR);
@@ -17,5 +20,8 @@ fn main() -> cosmic::iced::Result {
     tracing_subscriber::fmt().with_env_filter(filter).with_writer(std::io::stderr).init();
     localize::localize();
     tracing::info!("Starting clock-center applet {}", env!("CARGO_PKG_VERSION"));
+    if let Ok(mode) = std::env::var("CLOCK_CENTER_PREVIEW") {
+        return preview::run(&mode);
+    }
     cosmic::applet::run::<app::App>(())
 }

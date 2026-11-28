@@ -1,0 +1,19 @@
+{
+  "name": "cosmic-ext-applet-clock-center",
+  "world": "LP Sleeve",
+  "seed": "seed:2dc7384c38e54b4a",
+  "platform": "linux-desktop",
+  "colorSource": "active COSMIC theme roles (src/sleeve.rs Tone)",
+  "colors": {
+    "print": { "role": "neutral", "source": "theme.on_bg_color" },
+    "dim": { "role": "neutral", "source": "theme.on_bg_color @ 0.68" },
+    "rule": { "role": "neutral", "source": "theme.bg_divider" },
+    "attention": { "role": "accent", "source": "theme.accent_text_color" },
+    "attention-fill": { "role": "accent", "source": "theme.accent_color" },
+    "on-attention": { "role": "accent", "source": "theme.on_accent_color" },
+    "critical": { "role": "status", "source": "theme.destructive_text_color" }
+  },
+  "type": { "face": "Cantarell", "row": 14, "caption": 11, "dayFigure": 64, "trackTitle": 20 },
+  "layout": { "popupWidth": 761, "minHeight": 792, "left": 416, "right": 288, "gap": 12, "padding": 16 },
+  "notes": ["Written inline: the shipped documenter agent could not start (plugin synced for another account)."]
+}

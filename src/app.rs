@@ -70,6 +70,9 @@ pub struct App {
     media_art: Option<(String, cosmic::widget::icon::Handle)>,
     /// Animation frame of the playing indicator.
     indicator_frame: u32,
+    /// World clocks and weather place.
+    cc_config: config::ClockCenterConfig,
+    weather: Option<crate::extras::Weather>,
 }
 
 #[derive(Debug, Clone)]
@@ -98,6 +101,9 @@ pub enum Message {
     Players(Vec<media::PlayerState>),
     MediaCommand(String, media::MediaCommand),
     IndicatorFrame,
+    ClockCenterConfigChanged(config::ClockCenterConfig),
+    RefreshWeather,
+    Weather(Option<crate::extras::Weather>),
 }
 
 impl App {
@@ -137,6 +143,8 @@ impl App {
         // and no card is expanded.
         self.expanded_groups.clear();
         self.expanded_cards.clear();
+        // Unread rows keep their dot while the popup is open; seen on close.
+        self.notifications.mark_all_read();
         if let Some(v) = self.popup_dnd.on_close() {
             notifications::dnd::write(v);
             if let Some(m) = notifications::dnd::marker_path() {
@@ -185,8 +193,13 @@ impl cosmic::Application for App {
                 players: Vec::new(),
                 media_art: None,
                 indicator_frame: 0,
+                cc_config: cosmic::cosmic_config::Config::new(config::CLOCK_CENTER_CONFIG_ID, config::ClockCenterConfig::VERSION)
+                    .ok()
+                    .and_then(|c| config::ClockCenterConfig::get_entry(&c).ok())
+                    .unwrap_or_default(),
+                weather: None,
             },
-            Task::none(),
+            Task::done(cosmic::Action::App(Message::RefreshWeather)),
         )
     }
 
@@ -209,7 +222,6 @@ impl cosmic::Application for App {
                     |_| Default::default(),
                     |app: &mut Self| {
                         app.date_selected = app.now.date();
-                        app.notifications.mark_all_read();
                         app.popup_opened();
                         let new_id = window::Id::unique();
                         app.popup = Some(new_id);
@@ -264,6 +276,26 @@ impl cosmic::Application for App {
                 self.now = jiff::Zoned::now();
                 Task::none()
             }
+            Message::ClockCenterConfigChanged(c) => {
+                let place_changed = c.weather != self.cc_config.weather;
+                self.cc_config = c;
+                if place_changed {
+                    self.weather = None;
+                    return Task::done(cosmic::Action::App(Message::RefreshWeather));
+                }
+                Task::none()
+            }
+            Message::RefreshWeather => match self.cc_config.weather.clone() {
+                Some(place) => Task::perform(crate::extras::fetch(place), |w| cosmic::Action::App(Message::Weather(w))),
+                None => Task::none(),
+            },
+            Message::Weather(w) => {
+                // Keep the last good reading through a failed refetch.
+                if w.is_some() {
+                    self.weather = w;
+                }
+                Task::none()
+            }
             Message::TimeConfigChanged(c) => {
                 self.time_config = c;
                 self.now = jiff::Zoned::now();
@@ -271,9 +303,6 @@ impl cosmic::Application for App {
             }
             Message::Notification(n) => {
                 self.notifications.push(n);
-                if self.popup.is_some() {
-                    self.notifications.mark_all_read();
-                }
                 Task::none()
             }
             Message::ChannelStatus(status) => {
@@ -423,6 +452,19 @@ impl cosmic::Application for App {
                     }
                     Message::DndChanged(u.config.do_not_disturb)
                 }),
+            self.core
+                .watch_config::<config::ClockCenterConfig>(config::CLOCK_CENTER_CONFIG_ID)
+                .map(|u| {
+                    for err in u.errors {
+                        tracing::error!(?err, "Error watching clock center config");
+                    }
+                    Message::ClockCenterConfigChanged(u.config)
+                }),
+            if self.cc_config.weather.is_some() {
+                cosmic::iced::time::every(crate::extras::WEATHER_EVERY).map(|_| Message::RefreshWeather)
+            } else {
+                Subscription::none()
+            },
             notifications::channel::subscription(),
             notifications::channel::closed_subscription(),
             media::subscription(),
@@ -457,35 +499,28 @@ impl cosmic::Application for App {
 
     fn view_window(&self, _id: window::Id) -> Element<'_, Message> {
         use cosmic::iced::Length;
-        use cosmic::widget::divider;
 
-        // Left: media (if any), notifications filling the column, DND/Clear pinned at the bottom.
-        let space = cosmic::theme::spacing();
-        let mut left = column![].spacing(space.space_xs).width(Length::Fixed(LEFT_WIDTH)).height(Length::Fill);
-        if media::pick_player(&self.players).is_some() {
-            left = left.push(media::view(&self.players, self.media_art.as_ref().map(|(_, h)| h)));
-        }
-        left = left.push(notifications::view(
-            &self.notifications,
-            self.notifications_status.as_ref(),
-            notifications::Expansion { cards: &self.expanded_cards, groups: &self.expanded_groups },
-            self.do_not_disturb,
-        ));
-
-        // Right: calendar.
-        let right = column![crate::calendar::view(self.date_selected, self.now.date(), self.time_config.first_day_of_week)]
-            .width(Length::Fixed(RIGHT_WIDTH));
-
-        // Fixed height, matching the popup window (popup_limits): the visible box is
-        // drawn only as tall as its content, so it must not shrink to the calendar.
-        // A long notification list scrolls inside the left column.
-        let content = row![left, divider::vertical::default(), right].spacing(COLUMN_SPACING);
+        let content = popup_content(PopupData {
+            players: &self.players,
+            art: self.media_art.as_ref().map(|(_, h)| h),
+            store: &self.notifications,
+            status: self.notifications_status.as_ref(),
+            expansion: notifications::Expansion { cards: &self.expanded_cards, groups: &self.expanded_groups },
+            do_not_disturb: self.do_not_disturb,
+            shown: self.date_selected,
+            today: self.now.date(),
+            first_day_of_week: self.time_config.first_day_of_week,
+            clocks: &self.cc_config.world_clocks,
+            place: self.cc_config.weather.as_ref(),
+            weather: self.weather.as_ref(),
+            now: &self.now,
+        });
         self.core
             .applet
             .popup_container(
                 container(content)
                     .padding(POPUP_PADDING)
-                    .height(Length::Fixed(MIN_HEIGHT + 2.0 * POPUP_PADDING)),
+                    .height(Length::Fixed(MIN_HEIGHT + 2.0 * POPUP_PADDING))
             )
             .limits(popup_limits())
             .into()
@@ -499,6 +534,53 @@ impl cosmic::Application for App {
         Some(cosmic::applet::style())
     }
 }
+
+/// Everything the popup draws, borrowed from the app (or from sample data
+/// in the `CLOCK_CENTER_PREVIEW` window).
+pub struct PopupData<'a> {
+    pub players: &'a [media::PlayerState],
+    pub art: Option<&'a cosmic::widget::icon::Handle>,
+    pub store: &'a NotificationStore,
+    pub status: Option<&'a ChannelStatus>,
+    pub expansion: notifications::Expansion<'a>,
+    pub do_not_disturb: bool,
+    pub shown: jiff::civil::Date,
+    pub today: jiff::civil::Date,
+    pub first_day_of_week: u8,
+    pub clocks: &'a [config::WorldClock],
+    pub place: Option<&'a config::WeatherPlace>,
+    pub weather: Option<&'a crate::extras::Weather>,
+    pub now: &'a jiff::Zoned,
+}
+
+/// The popup's two columns at their fixed size (without the popup frame).
+pub fn popup_content(d: PopupData<'_>) -> Element<'_, Message> {
+    use cosmic::iced::Length;
+
+    // Left: media (if any), notifications filling the column, DND/Clear pinned at the bottom.
+    let space = cosmic::theme::spacing();
+    let _ = space;
+    let mut left = column![].spacing(20).width(Length::Fixed(LEFT_WIDTH)).height(Length::Fill);
+    if media::pick_player(d.players).is_some() {
+        left = left.push(media::view(d.players, d.art));
+    }
+    left = left.push(notifications::view(d.store, d.status, d.expansion, d.do_not_disturb));
+
+    // Right: calendar, then the credits (world clocks, weather).
+    let right = column![
+        crate::calendar::view(d.shown, d.today, d.first_day_of_week),
+        crate::sleeve::hairline(),
+        crate::extras::view(d.clocks, d.place, d.weather, d.now),
+    ]
+    .spacing(16)
+    .width(Length::Fixed(RIGHT_WIDTH));
+
+    row![left, crate::sleeve::vrule(), right].spacing(COLUMN_SPACING).into()
+}
+
+/// Popup size (content + padding), for the preview window.
+pub const POPUP_SIZE: (f32, f32) = (POPUP_WIDTH, MIN_HEIGHT + 2.0 * POPUP_PADDING);
+pub const PREVIEW_PADDING: f32 = POPUP_PADDING;
 
 impl App {
     /// Forget expansion state for notifications/groups that no longer exist.
